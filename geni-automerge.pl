@@ -8,6 +8,7 @@ use IO::File;
 use Time::HiRes;
 use JSON;
 use Data::Dumper;
+binmode STDOUT ":utf8";
 
 # 46,805,758 big tree profiles on 10/29/2010
 #
