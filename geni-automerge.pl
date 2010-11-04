@@ -913,8 +913,7 @@ sub main() {
 
    geniLogin($username, $password); # Go ahead and login so the user will know now if they mistyped their password
 	my $beg = rand(1000);
-   traversePendingMergePages(int($beg), int($beg+5));
-   #traversePendingMergePages($range_begin, $range_end);
+   traversePendingMergePages($range_begin, $range_end);
    geniLogout();
 
    my $end_time = time;
