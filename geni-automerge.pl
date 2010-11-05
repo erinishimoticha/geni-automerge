@@ -572,12 +572,12 @@ sub profileBasicsMatch($$) {
 			$right_profile->name_maiden);
 
 	if ($left_name_whole ne $right_name_whole &&
-		 $left_name_nomiddle ne $right_name_nomiddle) {
-	  
+		$left_name_nomiddle ne $right_name_nomiddle) {
+
 		printDebug($DBG_MATCH_BASIC,
-					  sprintf("profileBasicsMatch(name): '%s' ne '%s'\n",
-								 $left_name_whole,
-								 $right_name_whole));
+			sprintf("profileBasicsMatch(name): '%s' ne '%s'\n",
+				$left_name_whole,
+				$right_name_whole));
 		# printDebug($DBG_MATCH_BASIC, "left_name_whole: $left_name_whole\n";
 		# printDebug($DBG_MATCH_BASIC, "right_name_whole: $right_name_whole\n";
 		# printDebug($DBG_MATCH_BASIC, "left_name_nomiddle: $left_name_nomiddle\n";
@@ -587,75 +587,75 @@ sub profileBasicsMatch($$) {
 
 	if ($left_profile->gender ne $right_profile->gender) {
 		printDebug($DBG_MATCH_BASIC,
-					  sprintf("profileBasicsMatch(gender): %s's '%s' does not equal '%s'\n",
-								 $left_name_whole,
-								 $left_profile->gender,
-								 $right_profile->gender));
+			sprintf("profileBasicsMatch(gender): %s's '%s' does not equal '%s'\n",
+				$left_name_whole,
+				$left_profile->gender,
+				$right_profile->gender));
 		return 0;
 	}
 
 	if ($left_profile->living ne $right_profile->living) {
 		printDebug($DBG_MATCH_BASIC,
-					  sprintf("profileBasicsMatch(living): %s's '%s' does not equal '%s'\n",
-								 $left_name_whole,
-								 $left_profile->living,
-								 $right_profile->living));
+			sprintf("profileBasicsMatch(living): %s's '%s' does not equal '%s'\n",
+				$left_name_whole,
+				$left_profile->living,
+				$right_profile->living));
 		return 0;
 	}
 
 	if (!dateMatches($left_profile->death_year, $right_profile->death_year)) {
 		printDebug($DBG_MATCH_BASIC,
-					  sprintf("profileBasicsMatch(death_date): %s's death year '%s' does not equal '%s'\n",
-								 $left_name_whole,
-								 $left_profile->death_year,
-								 $right_profile->death_year));
+			sprintf("profileBasicsMatch(death_date): %s's death year '%s' does not equal '%s'\n",
+				$left_name_whole,
+				$left_profile->death_year,
+				$right_profile->death_year));
 		return 0;
 	}
 
 	if (!dateMatches($left_profile->death_date, $right_profile->death_date)) {
 		printDebug($DBG_MATCH_BASIC,
-					  sprintf("profileBasicsMatch(death_date): %s's death date '%s' does not equal '%s'\n",
-								 $left_name_whole,
-								 $left_profile->death_date,
-								 $right_profile->death_date));
+			sprintf("profileBasicsMatch(death_date): %s's death date '%s' does not equal '%s'\n",
+				$left_name_whole,
+				$left_profile->death_date,
+				$right_profile->death_date));
 		return 0;
 	}
 
 	if (!dateMatches($left_profile->birth_year, $right_profile->birth_year)) {
 		printDebug($DBG_MATCH_BASIC,
-					  sprintf("profileBasicsMatch(birth_year): %s's birth year '%s' does not equal '%s'\n",
-								 $left_name_whole,
-								 $left_profile->birth_year,
-								 $right_profile->birth_year));
+			sprintf("profileBasicsMatch(birth_year): %s's birth year '%s' does not equal '%s'\n",
+				$left_name_whole,
+				$left_profile->birth_year,
+				$right_profile->birth_year));
 		return 0;
 	}
 
 	if (!dateMatches($left_profile->birth_date, $right_profile->birth_date)) {
 		printDebug($DBG_MATCH_BASIC,
-					  sprintf("profileBasicsMatch(birth_date): %s's birth date '%s' does not equal '%s'\n",
-								 $left_name_whole,
-								 $left_profile->birth_date,
-								 $right_profile->birth_date));
+			sprintf("profileBasicsMatch(birth_date): %s's birth date '%s' does not equal '%s'\n",
+				$left_name_whole,
+				$left_profile->birth_date,
+				$right_profile->birth_date));
 		return 0;
 	}
 
 	# For females the maiden name must match
 	if (lc($left_profile->gender) eq "female") {
 		if ($left_profile->name_maiden ne "" &&
-			 $right_profile->name_maiden ne "" &&
-			 lc($left_profile->name_maiden) ne lc($right_profile->name_maiden)) {
+			$right_profile->name_maiden ne "" &&
+			lc($left_profile->name_maiden) ne lc($right_profile->name_maiden)) {
 			printDebug($DBG_MATCH_BASIC,
-						  sprintf("profileBasicsMatch(maiden): %s's '%s' does not equal '%s'\n",
-									 $left_name_whole,
-									  $left_profile->name_maiden,
-									  $right_profile->name_maiden));
+				sprintf("profileBasicsMatch(maiden): %s's '%s' does not equal '%s'\n",
+					$left_name_whole,
+					$left_profile->name_maiden,
+					$right_profile->name_maiden));
 			return 0;
 		}
 	}
 
 	printDebug($DBG_MATCH_BASIC,
-				  sprintf("profileBasicsMatch(name): %s's basic profile data matches\n",
-							 $left_name_whole));
+		sprintf("profileBasicsMatch(name): %s's basic profile data matches\n",
+			$left_name_whole));
 	return 1;
 }
 
@@ -687,8 +687,8 @@ sub getMaxPage() {
 	$max_page = int($max_page/50);
 
 	printDebug($DBG_PROGRESS,
-				  sprintf("There are %d merge issues spread over %d pages\n",
-							 $max_page * 50, $max_page));
+		sprintf("There are %d merge issues spread over %d pages\n",
+			$max_page * 50, $max_page));
 
 	return ($max_page);
 }
@@ -885,10 +885,10 @@ sub traversePendingMergePages($$) {
 		my $loop_end_time = time();
 		my $loop_run_time = $loop_end_time - $loop_start_time;
 		printDebug($DBG_NONE,
-					  sprintf("Run time for page $i: %02d:%02d:%02d\n",
-								 int($loop_run_time/3600),
-								 int(($loop_run_time % 3600) / 60),
-								 int($loop_run_time % 60)));
+			sprintf("Run time for page $i: %02d:%02d:%02d\n",
+				int($loop_run_time/3600),
+				int(($loop_run_time % 3600) / 60),
+				int($loop_run_time % 60)));
 		printDebug($DBG_PROGRESS, "$env{'matches'} matches out of $env{'profiles'} profiles so far\n");
 
 	} # End of range_begin/range_end for loop
@@ -957,10 +957,10 @@ sub main() {
 	my $end_time = time();
 	my $run_time = $end_time - $env{'start_time'};
 	printDebug($DBG_NONE,
-				  sprintf("Total running time: %02d:%02d:%02d\n",
-							 int($run_time/3600),
-							 int(($run_time % 3600) / 60),
-							 int($run_time % 60)));
+		sprintf("Total running time: %02d:%02d:%02d\n",
+			int($run_time/3600),
+			int(($run_time % 3600) / 60),
+			int($run_time % 60)));
 
 	undef $debug_fh;
 }
