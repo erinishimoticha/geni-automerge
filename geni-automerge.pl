@@ -28,6 +28,10 @@ my $api_get_timeframe = 10;
 my $api_get_limit = 18; # Amos has the limit set to 20 so we'll use 18 to have some breathing room
 my $rootdir = "script_data";
 makeDirectory($rootdir);
+makeDirectory("logs");
+
+my $get_history_filename = "$rootdir/get_history.txt";
+my $yeardiff = 1; #default is 5
 
 # Debug variables
 my %debug;
@@ -337,7 +341,6 @@ sub getPage($$) {
    # don't access get_history at once
    my $gets_in_last_ten_seconds = 0;
    my @get_history;
-   my $get_history_filename = "get_history.txt";
    if (-e $get_history_filename) {
       my $get_history_fh = createReadFH($get_history_filename);
       while(<$get_history_fh>) {
@@ -386,7 +389,7 @@ sub yearInRange($$$) {
    (my $year1, my $year2, my $circa) = @_;
 
    if ($circa) { 
-      return (abs(($year1) - ($year2)) <= $circa_range ? 1 : 0);
+      return (abs(($year1) - ($year2)) <= $circa_range ? $yeardiff : 0);
    }
 
    return ($year1 == $year2); 
@@ -738,8 +741,7 @@ sub compareProfiles($) {
    my $fh = createReadFH($filename);
    my $json_data = <$fh>;
    my $json = new JSON;
-   my $json_text = $json->allow_nonref->utf8->relaxed->escape_slash->loose->allow_singlequote->allow_barekey->decode($json_data);
-   my $json_text = $json->allow_nonref->utf8->relaxed->escape_slash->loose->allow_singlequote->allow_barekey->decode($json_data);
+   my $json_text = $json->allow_nonref->utf8->relaxed->decode($json_data);
    undef $fh;
 
    # printDebug($DBG_NONE, sprintf ("Pretty JSON:\n%s", $json->pretty->encode($json_text)));
@@ -826,7 +828,6 @@ sub compareProfiles($) {
 sub updateGetHistory() {
    # todo: add this timestamp to get_history
    (my $time_sec, my $time_usec) = Time::HiRes::gettimeofday();
-   my $get_history_filename = "get_history.txt";
    my $get_history_fh = createWriteFH("", $get_history_filename, 1);
    print $get_history_fh "$time_sec.$time_usec\n";
    undef $get_history_fh
@@ -874,7 +875,6 @@ sub traversePendingMergePages($$) {
       my $fh = createReadFH($filename);
       my $json_data = <$fh>;
       my $json = new JSON;
-      # my $json_text = $json->allow_nonref->utf8->relaxed->escape_slash->loose->allow_singlequote->allow_barekey->decode($json_data);
       my $json_text = $json->allow_nonref->utf8->relaxed->decode($json_data);
       undef $fh;
 
@@ -885,8 +885,8 @@ sub traversePendingMergePages($$) {
          $page_profile_count++;
 
          printDebug($DBG_NONE, "Page $i/$range_end Profile $page_profile_count: Overall Profile $profile_count\n");
-	 printDebug($DBG_NONE, "<a href=\"$profiles_url\">$profiles_url</a>\n" );
-	 printDebug($DBG_URLS, "merge_url: %merges_url\n" );
+	 	printDebug($DBG_NONE, "<a href=\"$profiles_url\">$profiles_url</a>\n" );
+	 	printDebug($DBG_URLS, "merge_url: %merges_url\n" );
 
          if ($profiles_url =~ /\/(\d+),(\d+)$/) {
             $filename = sprintf("$rootdir/%s-%s.json", $1, $2);
@@ -970,12 +970,12 @@ sub main() {
       exit();
    }
 
-   printDebug($DBG_NONE, "<pre>");
+   print $debug_fh "<pre>";
    # geniLoginAPI($username, $password); # Go ahead and login so the user will know now if they mistyped their password
    geniLogin($username, $password); # Go ahead and login so the user will know now if they mistyped their password
    traversePendingMergePages($range_begin, $range_end);
    geniLogout();
-   printDebug($DBG_NONE, "</pre>");
+   print $debug_fh "</pre>";
 
    my $end_time = time;
    my $run_time = $end_time - $start_time;
