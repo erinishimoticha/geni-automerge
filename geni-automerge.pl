@@ -56,20 +56,20 @@ sub init(){
 	$debug{"console_" . $DBG_MATCH_DATE}	= 0;
 
 	struct (profile => {
-		name_first	  => '$',
-		name_middle	 => '$',
+		name_first		=> '$',
+		name_middle		=> '$',
 		name_last		=> '$',
-		name_maiden	 => '$',
+		name_maiden		=> '$',
 		suffix			=> '$',
 		gender			=> '$',
 		living			=> '$',
-		birth_year	  => '$',
-		birth_date	  => '$',
-		birth_location => '$',
-		death_year	  => '$',
-		death_date	  => '$',
-		death_location => '$',
-		partners		 => '$'
+		birth_year		=> '$',
+		birth_date		=> '$',
+		birth_location	=> '$',
+		death_year		=> '$',
+		death_date		=> '$',
+		death_location	=> '$',
+		partners		=> '$'
 	});
 }
 
