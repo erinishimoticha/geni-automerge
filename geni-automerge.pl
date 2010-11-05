@@ -9,7 +9,7 @@ use Time::HiRes;
 use JSON;
 
 # globals and constants
-my (%env, %debug, $debug_fh, $m);
+my (%env, %debug, $debug_fh, $m, %blacklist_managers);
 my $m = WWW::Mechanize->new(autocheck => 0);
 my $DBG_NONE			= "DBG_NONE"; # Normal output
 my $DBG_PROGRESS		= "DBG_PROGRESS";
@@ -71,6 +71,12 @@ sub init(){
 		death_location		=> '$',
 		partners		=> '$'
 	});
+
+	# It is a long story but for now don't merge profiles managed by the following:
+	# http://www.geni.com/people/Wendy-Hynes/6000000003753338015#/tab/overview
+	# http://www.geni.com/people/Alan-Sciascia/6000000009948172621#/tab/overview
+        $blacklist_managers{"6000000003753338015"} = 1;
+        $blacklist_managers{"6000000009948172621"} = 1;
 }
 
 
@@ -727,8 +733,20 @@ sub compareProfiles($) {
 	my $right_profile= new profile;
 	my $geni_profile = $left_profile;
 	foreach my $json_profile (@{$json_text}) {
-		if ($json_profile->{'focus'}->{'big_tree'} ne "true") {
+
+		# If the profile isn't on the big tree then don't merge it.
+		# If the profile has a curator note it is probably a profile
+		# subject to bad merges so don't merge it.
+		if ($json_profile->{'focus'}->{'big_tree'} ne "true" ||
+			$json_profile->{'focus'}->{'merge_note'} ne "") {
 			return 0;
+		}
+
+		# Do not merge a profile managed by any of the blacklist_managers
+                foreach my $profile_id (split(/,/, $json_profile->{'focus'}->{'managers'})) {
+			if ($blacklist_managers{$profile_id}) {
+				return 0;
+			}
 		}
 
 		$geni_profile->name_first(removeMiscSpaces($json_profile->{'focus'}->{'first_name'}));
@@ -863,7 +881,8 @@ sub traversePendingMergePages($$) {
 			my $merge_url	 = $json_profile_pair->{'merge_url'};
 			$env{'profiles'}++;
 			$page_profile_count++;
-			printDebug($DBG_PROGRESS, "Page $i/$range_end Profile $page_profile_count: Overall Profile $env{'profiles'}\n");			printDebug($DBG_NONE, "<a href=\"$profiles_url\">$profiles_url</a>\n" );
+			printDebug($DBG_PROGRESS, "Page $i/$range_end Profile $page_profile_count: Overall Profile $env{'profiles'}\n");
+			printDebug($DBG_NONE, "<a href=\"$profiles_url\">$profiles_url</a>\n" );
 			printDebug($DBG_URLS, "merge_url: $merge_url\n" );
 
 			if ($profiles_url =~ /\/(\d+),(\d+)$/) {
