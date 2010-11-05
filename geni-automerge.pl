@@ -815,18 +815,14 @@ sub compareProfiles($) {
       return 0;
    }
 
-   # We've already merged this one
-   #if (-e $screen_scrape_filename) {
-   #   printDebug($DBG_NONE, "Profile parents/spouses DO match but we've already merged this one\n");
-   #   return 0;
-   #}
-
    printDebug($DBG_NONE, "Profile parents/spouses DO match\n");
    return 1;
 }
 
+#
+# Update the get_history file with the current timestamp
+#
 sub updateGetHistory() {
-   # todo: add this timestamp to get_history
    (my $time_sec, my $time_usec) = Time::HiRes::gettimeofday();
    my $get_history_fh = createWriteFH("", $get_history_filename, 1);
    print $get_history_fh "$time_sec.$time_usec\n";
