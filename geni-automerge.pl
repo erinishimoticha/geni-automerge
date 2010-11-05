@@ -145,9 +145,7 @@ sub createWriteFH($$$) {
 
 sub prependZero($) {
 	my $num = shift;
-	if ($num =~ /^\d$/) {
-		return "0" . $num;
-	}
+	return $num =~ /^\d$/ ? "0" . $num : $num;
 }
 
 sub dateHourMinuteSecond() {
