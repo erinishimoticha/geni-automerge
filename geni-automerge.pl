@@ -8,6 +8,8 @@ use IO::File;
 use Time::HiRes;
 use JSON;
 
+
+
 # 46,805,758 big tree profiles on 10/29/2010
 #
 # todo
@@ -21,14 +23,15 @@ use JSON;
 # Misc variables
 my $start_time = time;
 my $mech = WWW::Mechanize->new(autocheck => 0);
+my $circa_range = 5;
 my $api_get_timeframe = 10;
-my $api_get_limit = 19; # Amos has the limit set to 20 so we'll use 18 to have some breathing room
+my $api_get_limit = 18; # Amos has the limit set to 20 so we'll use 18 to have some breathing room
 my $rootdir = "script_data";
 makeDirectory($rootdir);
 
 # Debug variables
 my %debug;
-my $debug_fh = createWriteFH("logfile", "logs/logfile_" . dateHourMinuteSecond() . ".txt", 0);
+my $debug_fh = createWriteFH("logfile", "logs/logfile_" . dateHourMinuteSecond() . ".html", 0);
 $debug_fh->autoflush(1);
 my $DBG_NONE           = "DBG_NONE"; # Normal output
 my $DBG_URLS           = "DBG_URLS";
@@ -44,6 +47,7 @@ $debug{$DBG_NONE} = 1;
 #$debug{$DBG_IO} = 1;
 #$debug{$DBG_URLS} = 1;
 $debug{$DBG_MATCHING_BASIC} = 1;
+# $debug{$DBG_MATCHING_DATES} = 1;
 
 # Counter variables
 my $matches = 0;
@@ -74,8 +78,9 @@ sub printHelp() {
    print STDERR "\nmerge_dr.pl\n\n";
    print STDERR "-u \"user\@email.com\"\n";
    print STDERR "-p password\n";
-   print STDERR "-rb X : rb is short for Range Begin, X is the starting page\n";
-   print STDERR "-re X : re is short for Range End, X is the ending page\n";
+   print STDERR "-circa X (optional): X defines the number of +/- years for date matching.  5 is the default\n";
+   print STDERR "-rb X (optional): rb is short for Range Begin, X is the starting page\n";
+   print STDERR "-re X (optional): re is short for Range End, X is the ending page\n";
    print STDERR "-h -help : print this menu\n\n";
    print STDERR "\n";
    exit(0);
@@ -88,9 +93,9 @@ sub printDebug($$) {
    (my $debug_flag, my $msg) = @_;
 
    if ($debug{$debug_flag}) {
-      if ($debug_flag ne $DBG_NONE) {
-         print STDERR "DEBUG: ";
-      }
+      # if ($debug_flag ne $DBG_NONE) {
+      #    print STDERR "DEBUG: ";
+      # }
       print STDERR "$msg";
       if ($debug_fh) {
          print $debug_fh "$msg";
@@ -115,7 +120,10 @@ sub gracefulExit($) {
 sub createReadFH($) {
    (my $filename) = @_;
    my $fh = new IO::File;
-   $fh->open("$filename", "r") || gracefulExit("\n\nERROR: createReadFH could not open '$filename'\n\n");
+#   $fh->open("$filename", "r") || gracefulExit("\n\nERROR: createReadFH could not open '$filename'\n\n");
+   unless($fh->open("$filename", "r")){
+		print "ERROR!\n";
+	}
    return $fh;
 }
 
@@ -187,6 +195,15 @@ sub todaysDate() {
    return "$year\_$mon\_$mday";
 }
 
+# This isn't working yet
+sub geniLoginAPI($$) {
+   (my $username, my $password) = @_;
+   my $url = "https://www.geni.com/login/in&username=$username&password=$password";
+
+   $mech->cookie_jar(HTTP::Cookies->new());
+   $mech->post($url);
+}
+
 #
 # Do a secure login into geni
 #
@@ -196,12 +213,17 @@ sub geniLogin($$) {
    
    $mech->cookie_jar(HTTP::Cookies->new());
    $mech->get($url);
-   $mech->form_number(1);
+   $mech->form_number(2);
    $mech->field("profile[username]" => $username);
    $mech->field("profile[password]" => $password);
    $mech->click();
    
-   if ($mech->content() =~ /Welcome to Geni/i) {
+   my $login_fh = createWriteFH("", "$rootdir/login.html", 0);
+   my $output = $mech->content();
+   print $login_fh $output;
+   undef $login_fh;
+
+   if ($output =~ /Welcome to Geni/i) {
       printDebug($DBG_NONE, "ERROR: Login FAILED for www.geni.com!!\n");
       exit();
    }
@@ -331,10 +353,10 @@ sub getPage($$) {
    }
 
    if ($gets_in_last_ten_seconds >= $api_get_limit) {
-      printDebug($DBG_NONE, "\n$gets_in_last_ten_seconds gets() in the past $api_get_timeframe seconds....sleeping....\n");
+      printDebug($DBG_NONE, "$gets_in_last_ten_seconds gets() in the past $api_get_timeframe seconds....sleeping....\n");
       sleep(1);
    } else {
-      printDebug($DBG_NONE, "\n$gets_in_last_ten_seconds gets() in the past $api_get_timeframe seconds\n");
+      # printDebug($DBG_NONE, "\n$gets_in_last_ten_seconds gets() in the past $api_get_timeframe seconds\n");
    }
 
    my $fh = createWriteFH("", $filename, 0);
@@ -357,10 +379,74 @@ sub getPage($$) {
 }
 
 #
-# Return TRUE of year1 and year2 fall within +/- 5 years of each other
+# Return TRUE if year1 or year2 were marked with circa and fall within +/- 5 years of each other.
+# Else only return TRUE if they match exactly
 #
-sub yearInRange($$) {
-	 return abs((shift) - (shift)) <= 1 ? 1 : 0;
+sub yearInRange($$$) {
+   (my $year1, my $year2, my $circa) = @_;
+
+   if ($circa) { 
+      return (abs(($year1) - ($year2)) <= $circa_range ? 1 : 0);
+   }
+
+   return ($year1 == $year2); 
+}
+
+sub monthDayYear($) {
+   my $date = shift;
+
+   my $date_month = 0;
+   my $date_day = 0;
+   my $date_year = 0;
+
+   # 7/1/1700
+   if ($date =~ /(\d+)\/(\d+)\/(\d+)/) {
+      $date_month = $1;
+      $date_day   = $2;
+      $date_year  = $3;
+
+   # July 1700
+   } elsif ($date =~ /(\w+) (\d+)/) {
+      $date_month = $1;
+      $date_year  = $2;
+           if ($date_month =~ /jan/i) { $date_month = 1;
+      } elsif ($date_month =~ /feb/i) { $date_month = 2;
+      } elsif ($date_month =~ /mar/i) { $date_month = 3;
+      } elsif ($date_month =~ /apr/i) { $date_month = 4;
+      } elsif ($date_month =~ /may/i) { $date_month = 5;
+      } elsif ($date_month =~ /jun/i) { $date_month = 6;
+      } elsif ($date_month =~ /jul/i) { $date_month = 7;
+      } elsif ($date_month =~ /aug/i) { $date_month = 8;
+      } elsif ($date_month =~ /sep/i) { $date_month = 9;
+      } elsif ($date_month =~ /oct/i) { $date_month = 10;
+      } elsif ($date_month =~ /nov/i) { $date_month = 11;
+      } elsif ($date_month =~ /dec/i) { $date_month = 12;
+      }
+
+   # 1700
+   } elsif ($date =~ /(\d+)/) {
+      $date_year  = $1;
+
+   # July
+   } elsif ($date =~ /(\w+)/) {
+      $date_month = $1;
+           if ($date_month =~ /jan/i) { $date_month = 1;
+      } elsif ($date_month =~ /feb/i) { $date_month = 2;
+      } elsif ($date_month =~ /mar/i) { $date_month = 3;
+      } elsif ($date_month =~ /apr/i) { $date_month = 4;
+      } elsif ($date_month =~ /may/i) { $date_month = 5;
+      } elsif ($date_month =~ /jun/i) { $date_month = 6;
+      } elsif ($date_month =~ /jul/i) { $date_month = 7;
+      } elsif ($date_month =~ /aug/i) { $date_month = 8;
+      } elsif ($date_month =~ /sep/i) { $date_month = 9;
+      } elsif ($date_month =~ /oct/i) { $date_month = 10;
+      } elsif ($date_month =~ /nov/i) { $date_month = 11;
+      } elsif ($date_month =~ /dec/i) { $date_month = 12;
+      }
+
+   }
+
+   return ($date_month, $date_day, $date_year);
 }
 
 #
@@ -369,24 +455,18 @@ sub yearInRange($$) {
 sub dateMatches($$) {
    (my $date1, my $date2) = @_;
 
+   printDebug($DBG_MATCHING_DATES, "DATES: date1 ($date1), date2($date2)");
+   if ($date1 eq $date2) {
+      printDebug($DBG_MATCHING_DATES, "  MATCHED\n");
+      return 1;
+   }
+
    # If one date is blank and the other is not then we consider one to be more specific than the other
    if (($date1 ne "" && $date2 eq "") ||
        ($date1 eq "" && $date2 ne "")) {
+      printDebug($DBG_MATCHING_DATES, "  MATCHED\n");
       return 1;
    } 
-
-   # Remove the circa "c. " and see if the dates match
-   if ($date1 =~ /c\.\s+(\d+)/) {
-      $date1 = $1;
-   }
-
-   if ($date2 =~ /c\.\s+(\d+)/) {
-      $date2 = $1;
-   }
-
-   if (yearInRange($date1, $date2)) {
-      return 1;
-   }
 
    my $date1_month = 0;
    my $date1_day   = 0;
@@ -394,79 +474,57 @@ sub dateMatches($$) {
    my $date2_month = 0;
    my $date2_day   = 0;
    my $date2_year  = 0;
+   my $circa       = 0;
 
-   if ($date1 =~ /(\d+)\/(\d+)\/(\d+)/) {
-      $date1_month = $1;
-      $date1_day   = $2;
-      $date1_year  = $3;
-
-   } elsif ($date1 =~ /(\w+) (\d+)/) {
-      $date1_month = $1;
-      $date1_year  = $2;
-           if ($date1_month =~ /jan/i) { $date1_month = 1;
-      } elsif ($date1_month =~ /feb/i) { $date1_month = 2;
-      } elsif ($date1_month =~ /mar/i) { $date1_month = 3;
-      } elsif ($date1_month =~ /apr/i) { $date1_month = 4;
-      } elsif ($date1_month =~ /may/i) { $date1_month = 5;
-      } elsif ($date1_month =~ /jun/i) { $date1_month = 6;
-      } elsif ($date1_month =~ /jul/i) { $date1_month = 7;
-      } elsif ($date1_month =~ /aug/i) { $date1_month = 8;
-      } elsif ($date1_month =~ /sep/i) { $date1_month = 9;
-      } elsif ($date1_month =~ /oct/i) { $date1_month = 10;
-      } elsif ($date1_month =~ /nov/i) { $date1_month = 11;
-      } elsif ($date1_month =~ /dec/i) { $date1_month = 12;
-      }
-
-   } else {
-      $date1_year  = $date1;
+   # Remove the circa "c."
+   if ($date1 =~ /c\.\s+(.*?)$/) {
+      $circa = 1;
+      $date1 = $1;
    }
 
-   if ($date2 =~ /(\d+)\/(\d+)\/(\d+)/) {
-      $date2_month = $1;
-      $date2_day   = $2;
-      $date2_year  = $3;
-
-   } elsif ($date2 =~ /(\w+) (\d+)/) {
-      $date2_month = $1;
-      $date2_year  = $2;
-
-      if ($date2_month =~ /jan/i) {      $date2_month = 1;
-      } elsif ($date2_month =~ /feb/i) { $date2_month = 2;
-      } elsif ($date2_month =~ /mar/i) { $date2_month = 3;
-      } elsif ($date2_month =~ /apr/i) { $date2_month = 4;
-      } elsif ($date2_month =~ /may/i) { $date2_month = 5;
-      } elsif ($date2_month =~ /jun/i) { $date2_month = 6;
-      } elsif ($date2_month =~ /jul/i) { $date2_month = 7;
-      } elsif ($date2_month =~ /aug/i) { $date2_month = 8;
-      } elsif ($date2_month =~ /sep/i) { $date2_month = 9;
-      } elsif ($date2_month =~ /oct/i) { $date2_month = 10;
-      } elsif ($date2_month =~ /nov/i) { $date2_month = 11;
-      } elsif ($date2_month =~ /dec/i) { $date2_month = 12;
-      }
-
-   } else {
-      $date2_year  = $date2;
+   # Remove the circa "c."
+   if ($date2 =~ /c\.\s+(.*?)$/) {
+      $circa = 1;
+      $date2 = $1;
    }
 
-   printDebug($DBG_MATCHING_DATES, "date1_month: $date1_month\n");
-   printDebug($DBG_MATCHING_DATES, "date1_day  : $date1_day\n");
-   printDebug($DBG_MATCHING_DATES, "date1_year : $date1_year\n\n");
-   printDebug($DBG_MATCHING_DATES, "date2_month: $date2_month\n");
-   printDebug($DBG_MATCHING_DATES, "date2_day  : $date2_day\n");
-   printDebug($DBG_MATCHING_DATES, "date2_year : $date2_year\n\n");
+   ($date1_month, $date1_day, $date1_year) = monthDayYear($date1);
+   ($date2_month, $date2_day, $date2_year) = monthDayYear($date2);
 
-   if (yearInRange($date1_year, $date2_year)) {
+   # If the year is pre 1750 then assume circa.  If you don't do this there are too many dates that
+   # are off by a year or two that never match
+   if ($circa == 0 &&
+       (($date1_year != 0 && $date1_year <= 1750) ||
+        ($date2_year != 0 && $date2_year <= 1750))) {
+      $circa = 1;
+   }
+
+   if ($debug{$DBG_MATCHING_DATES}) {
+      printDebug($DBG_MATCHING_DATES, "\n date1_month: $date1_month\n");
+      printDebug($DBG_MATCHING_DATES, " date1_day  : $date1_day\n");
+      printDebug($DBG_MATCHING_DATES, " date1_year : $date1_year\n");
+      printDebug($DBG_MATCHING_DATES, " date2_month: $date2_month\n");
+      printDebug($DBG_MATCHING_DATES, " date2_day  : $date2_day\n");
+      printDebug($DBG_MATCHING_DATES, " date2_year : $date2_year\n");
+      printDebug($DBG_MATCHING_DATES, " circa      : $circa\n\n");
+   }
+
+   if (yearInRange($date1_year, $date2_year, $circa)) {
       if ($date1_month == $date2_month) {
          if ($date1_day == $date2_day) {
+            printDebug($DBG_MATCHING_DATES, "  MATCHED\n");
             return 1;
          } elsif ($date1_day == 0 || $date2_day == 0) {
+            printDebug($DBG_MATCHING_DATES, "  MATCHED\n");
             return 1;
          }
       } elsif ($date1_month == 0 || $date2_month == 0) {
+            printDebug($DBG_MATCHING_DATES, "  MATCHED\n");
          return 1;
       }
    }
 
+   printDebug($DBG_MATCHING_DATES, "  DID NOT MATCH\n");
    return 0;
 }
 
@@ -680,9 +738,8 @@ sub compareProfiles($) {
    my $fh = createReadFH($filename);
    my $json_data = <$fh>;
    my $json = new JSON;
-	print "$matches merges initiated.\n";
-   my $json_text = $json->allow_nonref->utf8->relaxed->decode($json_data);
-   #my $json_text = $json->allow_nonref->utf8->relaxed->escape_slash->loose->allow_singlequote->allow_barekey->decode($json_data);
+   my $json_text = $json->allow_nonref->utf8->relaxed->escape_slash->loose->allow_singlequote->allow_barekey->decode($json_data);
+   my $json_text = $json->allow_nonref->utf8->relaxed->escape_slash->loose->allow_singlequote->allow_barekey->decode($json_data);
    undef $fh;
 
    # printDebug($DBG_NONE, sprintf ("Pretty JSON:\n%s", $json->pretty->encode($json_text)));
@@ -806,7 +863,7 @@ sub traversePendingMergePages($$) {
       my $filename = "$rootdir/merge_list_$i.json";
       printDebug($DBG_NONE, "Downloading pending merges list...\n");
 
-      getPage($filename, "http://www.geni.com/api/profiles/merges?collaborators=true&page=$i");
+      getPage($filename, "http://www.geni.com/api/profiles/merges?collaborators=true&order=last_modified_at&direction=asc&page=$i");
       # getPage($filename, "http://www.geni.com/api/profiles/merges?collaborators=true&all=true");
 
       if (jsonSanityCheck($filename) == 0) {
@@ -817,7 +874,8 @@ sub traversePendingMergePages($$) {
       my $fh = createReadFH($filename);
       my $json_data = <$fh>;
       my $json = new JSON;
-      my $json_text = $json->allow_nonref->utf8->relaxed->escape_slash->loose->allow_singlequote->allow_barekey->decode($json_data);
+      # my $json_text = $json->allow_nonref->utf8->relaxed->escape_slash->loose->allow_singlequote->allow_barekey->decode($json_data);
+      my $json_text = $json->allow_nonref->utf8->relaxed->decode($json_data);
       undef $fh;
 
       foreach my $json_profile_pair (@{$json_text}) {
@@ -826,23 +884,23 @@ sub traversePendingMergePages($$) {
          $profile_count++;
          $page_profile_count++;
 
-         printDebug($DBG_NONE,"Page $i/$range_end Profile $page_profile_count: Overall Profile $profile_count\n");
-	 printDebug($DBG_URLS,
-                    sprintf("profiles:  %s\nmerge_url: %s\n",
-                            $profiles_url, $merge_url));
+         printDebug($DBG_NONE, "Page $i/$range_end Profile $page_profile_count: Overall Profile $profile_count\n");
+	 printDebug($DBG_NONE, "<a href=\"$profiles_url\">$profiles_url</a>\n" );
+	 printDebug($DBG_URLS, "merge_url: %merges_url\n" );
 
          if ($profiles_url =~ /\/(\d+),(\d+)$/) {
             $filename = sprintf("$rootdir/%s-%s.json", $1, $2);
 
+	    # http://www.geni.com/merge/compare/6000000004086345876?return=merge_center&to=5659624823800046253
+	    printDebug($DBG_NONE, "<a href=\"http://www.geni.com/merge/compare/$2?return=merge_center&to=$1\">http://www.geni.com/merge/compare/$1?return=merge_center&to=$2</a>\n");
             getPage($filename, $profiles_url);
 
             if (compareProfiles($filename)) {
                $matches++;
-               printDebug($DBG_NONE, "MERGING: $merge_url\n");
+               printDebug($DBG_NONE, "<b>MERGING: $merge_url</b>\n");
                $mech->post($merge_url);
                updateGetHistory();
             }
-			sleep(5);
          }
          printDebug($DBG_NONE, "\n");
       } # End of json_profile_pair for loop
@@ -878,6 +936,9 @@ sub main() {
       } elsif ($ARGV[$i] eq "-p" || $ARGV[$i] eq "-password") {
          $password = $ARGV[++$i];
 
+      } elsif ($ARGV[$i] eq "-c" || $ARGV[$i] eq "-circa") {
+         $circa_range = $ARGV[++$i];
+
       } elsif ($ARGV[$i] eq "-rb") {
          $range_begin = $ARGV[++$i];
 
@@ -909,9 +970,12 @@ sub main() {
       exit();
    }
 
+   printDebug($DBG_NONE, "<pre>");
+   # geniLoginAPI($username, $password); # Go ahead and login so the user will know now if they mistyped their password
    geniLogin($username, $password); # Go ahead and login so the user will know now if they mistyped their password
    traversePendingMergePages($range_begin, $range_end);
    geniLogout();
+   printDebug($DBG_NONE, "</pre>");
 
    my $end_time = time;
    my $run_time = $end_time - $start_time;
