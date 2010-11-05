@@ -8,30 +8,26 @@ use IO::File;
 use Time::HiRes;
 use JSON;
 
+package gam;
 
+my (%env, $m);
+my $m = WWW::Mechanize->new(autocheck => 0);
 
-# 46,805,758 big tree profiles on 10/29/2010
-#
-# todo
-# - (done) better debugs
-# - (done) File IO module
-# - (done) functions from work script
-# - (done) measure how many req we did in the last 10 seconds
-# - remove 'sir', 'president', 'knight', 'of'
-# - write wiki
+init();
 
-# Misc variables
-my $start_time = time;
-my $mech = WWW::Mechanize->new(autocheck => 0);
-my $circa_range = 5;
-my $api_get_timeframe = 10;
-my $api_get_limit = 18; # Amos has the limit set to 20 so we'll use 18 to have some breathing room
-my $rootdir = "script_data";
-makeDirectory($rootdir);
+sub init(){
+	$env{'start_time'} = time();
+	$env{'circa_range'} = 1;
+	$env{'get_timeframe'} = 10;
+	$env{'get_limit'} = 18; # Amos has the limit set to 20 so we'll use 18 to have some breathing room
+	$env{'datadir'} = "script_data";
+	$env{'logdir'} = "logs";
+
+	mkdir $env{'datadir'} if !(-e $env{'datadir'});
+makeDirectory($env{'datadir'});
 makeDirectory("logs");
 
-my $get_history_filename = "$rootdir/get_history.txt";
-my $yeardiff = 1; #default is 5
+my $get_history_filename = "$env{'datadir'}/get_history.txt";
 
 # Debug variables
 my %debug;
@@ -204,8 +200,8 @@ sub geniLoginAPI($$) {
    (my $username, my $password) = @_;
    my $url = "https://www.geni.com/login/in&username=$username&password=$password";
 
-   $mech->cookie_jar(HTTP::Cookies->new());
-   $mech->post($url);
+   $m->cookie_jar(HTTP::Cookies->new());
+   $m->post($url);
 }
 
 #
@@ -215,15 +211,15 @@ sub geniLogin($$) {
    (my $username, my $password) = @_;
    my $url = "https://www.geni.com/login";
    
-   $mech->cookie_jar(HTTP::Cookies->new());
-   $mech->get($url);
-   $mech->form_number(2);
-   $mech->field("profile[username]" => $username);
-   $mech->field("profile[password]" => $password);
-   $mech->click();
+   $m->cookie_jar(HTTP::Cookies->new());
+   $m->get($url);
+   $m->form_number(2);
+   $m->field("profile[username]" => $username);
+   $m->field("profile[password]" => $password);
+   $m->click();
    
-   my $login_fh = createWriteFH("", "$rootdir/login.html", 0);
-   my $output = $mech->content();
+   my $login_fh = createWriteFH("", "$env{'datadir'}/login.html", 0);
+   my $output = $m->content();
    print $login_fh $output;
    undef $login_fh;
 
@@ -240,7 +236,7 @@ sub geniLogin($$) {
 #
 sub geniLogout() {
    printDebug($DBG_NONE, "Logging out of www.geni.com\n");
-   $mech->get("http://www.geni.com/logout?ref=ph");
+   $m->get("http://www.geni.com/logout?ref=ph");
 }
 
 sub jsonSanityCheck($) {
@@ -355,7 +351,7 @@ sub getPage($$) {
       undef $get_history_fh;
    }
 
-   if ($gets_in_last_ten_seconds >= $api_get_limit) {
+   if ($gets_in_last_ten_seconds >= $env{'get_limit'}) {
       printDebug($DBG_NONE, "$gets_in_last_ten_seconds gets() in the past $api_get_timeframe seconds....sleeping....\n");
       sleep(1);
    } else {
@@ -363,8 +359,8 @@ sub getPage($$) {
    }
 
    my $fh = createWriteFH("", $filename, 0);
-   $mech->get($url);
-   print $fh $mech->content();
+   $m->get($url);
+   print $fh $m->content();
    undef $fh;
 
    (my $time_sec, my $time_usec) = Time::HiRes::gettimeofday();
@@ -389,7 +385,7 @@ sub yearInRange($$$) {
    (my $year1, my $year2, my $circa) = @_;
 
    if ($circa) { 
-      return (abs(($year1) - ($year2)) <= $circa_range ? $yeardiff : 0);
+      return (abs(($year1) - ($year2)) <= $env{'circa_range'} ? $env{'circa_range'} : 0);
    }
 
    return ($year1 == $year2); 
@@ -685,7 +681,7 @@ sub profileBasicsMatch($$) {
 # isn't a way to do this via the API so we screen scrape it from the html.
 #
 sub getMaxPage() {
-   my $filename = "$rootdir/merge_issues_1.html";
+   my $filename = "$env{'datadir'}/merge_issues_1.html";
    my $max_page = 1;
 
    printDebug($DBG_NONE, "Determining the number of pages of pending merges...\n");
@@ -849,7 +845,7 @@ sub traversePendingMergePages($$) {
       $range_begin = 1;
 
       for (my $i = 1; $i <= $range_end; $i++) {
-         if (-e "$rootdir/merge_list_$i.json") {
+         if (-e "$env{'datadir'}/merge_list_$i.json") {
             $range_begin = $i;
          }
       }
@@ -861,7 +857,7 @@ sub traversePendingMergePages($$) {
    for (my $i = $range_begin; $i <= $range_end; $i++) {
       my $loop_start_time = time;
       my $page_profile_count = 0;
-      my $filename = "$rootdir/merge_list_$i.json";
+      my $filename = "$env{'datadir'}/merge_list_$i.json";
       printDebug($DBG_NONE, "Downloading pending merges list...\n");
 
       getPage($filename, "http://www.geni.com/api/profiles/merges?collaborators=true&order=last_modified_at&direction=asc&page=$i");
@@ -889,7 +885,7 @@ sub traversePendingMergePages($$) {
 	 	printDebug($DBG_URLS, "merge_url: %merges_url\n" );
 
          if ($profiles_url =~ /\/(\d+),(\d+)$/) {
-            $filename = sprintf("$rootdir/%s-%s.json", $1, $2);
+            $filename = sprintf("$env{'datadir'}/%s-%s.json", $1, $2);
 
 	    # http://www.geni.com/merge/compare/6000000004086345876?return=merge_center&to=5659624823800046253
 	    printDebug($DBG_NONE, "<a href=\"http://www.geni.com/merge/compare/$2?return=merge_center&to=$1\">http://www.geni.com/merge/compare/$1?return=merge_center&to=$2</a>\n");
@@ -898,7 +894,7 @@ sub traversePendingMergePages($$) {
             if (compareProfiles($filename)) {
                $matches++;
                printDebug($DBG_NONE, "<b>MERGING: $merge_url</b>\n");
-               $mech->post($merge_url);
+               $m->post($merge_url);
                updateGetHistory();
             }
          }
@@ -937,7 +933,7 @@ sub main() {
          $password = $ARGV[++$i];
 
       } elsif ($ARGV[$i] eq "-c" || $ARGV[$i] eq "-circa") {
-         $circa_range = $ARGV[++$i];
+         $env{'circa_range'} = $ARGV[++$i];
 
       } elsif ($ARGV[$i] eq "-rb") {
          $range_begin = $ARGV[++$i];
@@ -949,7 +945,7 @@ sub main() {
          $api_get_timeframe = $ARGV[++$i];
 
       } elsif ($ARGV[$i] eq "-api_get_limit") {
-         $api_get_limit = $ARGV[++$i];
+         $env{'get_limit'} = $ARGV[++$i];
 
       } elsif ($ARGV[$i] eq "-h" || $ARGV[$i] eq "-help") {
          printHelp();
@@ -978,7 +974,7 @@ sub main() {
    print $debug_fh "</pre>";
 
    my $end_time = time;
-   my $run_time = $end_time - $start_time;
+   my $run_time = $end_time - $env{'start_time'};
    printDebug($DBG_NONE,
               sprintf("Total running time: %02d:%02d:%02d\n",
                       int($run_time/3600),
@@ -989,4 +985,15 @@ sub main() {
 }
 
 main();
+__END__
+46,805,758 big tree profiles on 10/29/2010
 
+DONE
+- better debugs
+- File IO module
+- functions from work script
+- measure how many req we did in the last 10 seconds
+
+TODO
+- remove 'sir', 'president', 'knight', 'of'
+- write wiki
