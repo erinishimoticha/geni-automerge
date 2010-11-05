@@ -1,0 +1,76 @@
+Quick git user's guide
+
+# NOTES: You should run 'git pull' or 'git pull --all' often 
+# to make sure you pull down changes others have pushed. If you don't,
+# you may find yourself trying to push changes that won't merge. 
+
+# HOW TO CODE A NEW FEATURE: Create a new branch by running
+# 'git checkout -b newbranch master'. Code your changes against the
+# new branch.  If you decide that your new feature is good enough 
+# to be included in the master branch, checkout the master branch and 
+# merge your changes like this:
+git checkout master
+git pull origin master
+git merge newbranch # this will commit automatically
+git push
+# You will also have to merge newbranch into any other branches you want
+# the new feature in.
+
+# Download the repository for the first time:
+git checkout git@github.com:erinspice/geni-automerge.git
+
+# Save a remote (kind of like a link) to the repository for easy pulling and pushing.
+git remote add origin git@github.com:erinspice/geni-automerge.git 
+
+# Tell git what who you are if you haven't set git up yet:
+git config --global user.name "First Last"
+git config --global user.email user@example.tld
+
+# List all branches.
+git branch -a   
+
+# get all the latest changes from the server:
+# be sure to do this EVERY TIME you switch to a branch that
+# already exists in the repository!!!!
+git pull origin branchname 
+
+# create a new branch
+git checkout -b mynewbranch master 
+
+# switch branches
+git checkout somebranch
+
+# list changes
+git status
+
+# diff
+git diff # if you have not committed yet
+git diff --cached # if you have committed already
+
+# commit changes
+# note that you have to re-add changed files after a commit
+git add changed-file-one.txt changed-file-two.txt
+git commit -m "This is my commit message!"
+
+# push changes to one branch the server
+git push origin branchtopush
+
+# push changes to all branches that already exist on the server
+git push 
+
+# push changes to all branches that already exist 
+# and push newly created branches
+git push --all
+
+# findout what pushing would do
+git push --dry-run [options as listed above]
+
+# undo a commit to add more changes or change a commit message
+# the ^ means reset to the next-to-last commit, --soft means to not actually
+# change any files on the disk.  This basically resets your history
+# without blowing away your code. 
+git reset --soft HEAD^
+
+# undo all uncommitted changes
+# no ^ means reset to the last commit
+git reset --hard HEAD 
