@@ -9,7 +9,7 @@ use Time::HiRes;
 use JSON;
 
 # globals and constants
-my (%env, %debug, $debug_fh, $m, %blacklist_managers);
+my (%env, %debug, $debug_fh, $merge_log_fh, $m, %blacklist_managers);
 my $m = WWW::Mechanize->new(autocheck => 0);
 my $DBG_NONE			= "DBG_NONE"; # Normal output
 my $DBG_PROGRESS		= "DBG_PROGRESS";
@@ -31,6 +31,10 @@ sub init(){
 
 	# environment
 	$env{'start_time'}		= time();
+
+	# todo: Once we are all running this script from the same machine
+	# merge_log_file needs to be the same file for all users.
+	$env{'merge_log_file'}		= "$env{'datadir'}/merge_log.html";
 	$env{'history_file'}		= "$env{'datadir'}/get_history.txt";
 	$env{'log_file'}		= "$env{'logdir'}/logfile_" . dateHourMinuteSecond() . ".html";
 	$env{'matches'} 		= 0;
@@ -40,6 +44,8 @@ sub init(){
 	(mkdir $env{'datadir'}, 0755) if !(-e $env{'datadir'});
 	(mkdir $env{'logdir'}, 0755) if !(-e $env{'logdir'});
 
+	$merge_log_fh				= createWriteFH("Merge History", $env{'merge_log_file'}, 1);
+	$merge_log_fh->autoflush(1);
 	$debug_fh				= createWriteFH("logfile", $env{'log_file'}, 0);
 	$debug_fh->autoflush(1);
 	$debug{"file_" . $DBG_NONE}		= 1;
@@ -835,10 +841,11 @@ sub updateGetHistory() {
 # Loop through every page of pending merges and analyze all
 # merges listed on each page. This can take days....
 #
-sub traversePendingMergePages($$) {
-	my $range_begin = shift;
-	my $range_end = shift;
-	my $max_page = getMaxPage();
+sub traversePendingMergePages($$$) {
+	my $username	= shift;
+	my $range_begin	= shift;
+	my $range_end	= shift;
+	my $max_page	= getMaxPage();
 
 	if ($range_end > $max_page || !$range_end) {
 		$range_end = $max_page;
@@ -877,25 +884,28 @@ sub traversePendingMergePages($$) {
 		undef $fh;
 
 		foreach my $json_profile_pair (@{$json_text}) {
-			my $profiles_url = $json_profile_pair->{'profiles'};
-			my $merge_url	 = $json_profile_pair->{'merge_url'};
+			my $profiles_url	= $json_profile_pair->{'profiles'};
+			my $merge_url_api	= $json_profile_pair->{'merge_url'};
 			$env{'profiles'}++;
 			$page_profile_count++;
 			printDebug($DBG_PROGRESS, "Page $i/$range_end Profile $page_profile_count: Overall Profile $env{'profiles'}\n");
 			printDebug($DBG_NONE, "<a href=\"$profiles_url\">$profiles_url</a>\n" );
-			printDebug($DBG_URLS, "merge_url: $merge_url\n" );
+			printDebug($DBG_URLS, "merge_url_api: $merge_url_api\n" );
 
 			if ($profiles_url =~ /\/(\d+),(\d+)$/) {
 				$filename = sprintf("$env{'datadir'}/%s-%s.json", $1, $2);
 
 				# http://www.geni.com/merge/compare/6000000004086345876?return=merge_center&to=5659624823800046253
-				printDebug($DBG_NONE, "<a href=\"http://www.geni.com/merge/compare/$2?return=merge_center&to=$1\">http://www.geni.com/merge/compare/$1?return=merge_center&to=$2</a>\n");
+                                my $merge_url_html = "<a href=\"http://www.geni.com/merge/compare/$2?return=merge_center&to=$1\">http://www.geni.com/merge/compare/$1?return=merge_center&to=$2</a>";
+				printDebug($DBG_NONE, "$merge_url_html\n");
 				getPage($filename, $profiles_url);
 
 				if (compareProfiles($filename)) {
+					my $merge_log_entry = sprintf("%s : %s : %s", $username, localtime(), $merge_url_html);
 					$env{'matches'}++;
-					printDebug($DBG_PROGRESS, "<b>MERGING: $merge_url</b>\n");
-					$m->post($merge_url);
+					printDebug($DBG_PROGRESS, "<b>MERGING: $merge_log_entry</b>\n");
+					printf $merge_log_fh "$merge_log_entry\n";
+					$m->post($merge_url_api);
 					updateGetHistory();
 				}
 			}
@@ -967,12 +977,12 @@ sub main() {
 		exit();
 	}
 
+	print $merge_log_fh "<pre>";
 	print $debug_fh "<pre>";
 	# geniLoginAPI($username, $password); # Go ahead and login so the user will know now if they mistyped their password
 	geniLogin($username, $password); # Go ahead and login so the user will know now if they mistyped their password
-	traversePendingMergePages($range_begin, $range_end);
+	traversePendingMergePages($username, $range_begin, $range_end);
 	geniLogout();
-	print $debug_fh "</pre>";
 
 	my $end_time = time();
 	my $run_time = $end_time - $env{'start_time'};
@@ -982,6 +992,9 @@ sub main() {
 			int(($run_time % 3600) / 60),
 			int($run_time % 60)));
 
+	print $merge_log_fh "</pre>";
+	undef $merge_log_fh;
+	print $debug_fh "</pre>";
 	undef $debug_fh;
 }
 
