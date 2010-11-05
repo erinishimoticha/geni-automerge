@@ -3,18 +3,27 @@ Quick git user's guide
 # NOTES: You should run 'git pull' or 'git pull --all' often 
 # to make sure you pull down changes others have pushed. If you don't,
 # you may find yourself trying to push changes that won't merge. 
+# Committing does not transfer any data, it just marks groups of
+# changes on your local machine. Pushing is how you get changes to 
+# the central repository, and you can push one or more commits at once.
 
-# HOW TO CODE A NEW FEATURE: Create a new branch by running
-# 'git checkout -b newbranch master'. Code your changes against the
+# HOW TO CODE A NEW FEATURE: Create a new branch.  Code your changes against the
 # new branch.  If you decide that your new feature is good enough 
 # to be included in the master branch, checkout the master branch and 
-# merge your changes like this:
+# merge your changes.
+git checkout -b newbranch master
+# code
+git add changedfiles
+git commit
 git checkout master
 git pull origin master
 git merge newbranch # this will commit automatically
-git push
+git push origin master
 # You will also have to merge newbranch into any other branches you want
 # the new feature in.
+git checkout someotherbranch
+git merge newbranch
+git push origin someotherbranch
 
 # Download the repository for the first time:
 git checkout git@github.com:erinspice/geni-automerge.git
