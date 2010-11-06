@@ -34,7 +34,7 @@ sub init(){
 
 	# todo: Once we are all running this script from the same machine
 	# merge_log_file needs to be the same file for all users.
-	$env{'merge_log_file'}		= "$env{'datadir'}/merge_log.html";
+	$env{'merge_log_file'}		= "$env{'logdir'}/merge_log.html";
 	$env{'history_file'}		= "$env{'datadir'}/get_history.txt";
 	$env{'log_file'}		= "$env{'logdir'}/logfile_" . dateHourMinuteSecond() . ".html";
 	$env{'matches'} 		= 0;
@@ -94,8 +94,9 @@ sub printHelp() {
 	print STDERR "-u \"user\@email.com\"\n";
 	print STDERR "-p password\n";
 	print STDERR "-circa X (optional): X defines the number of +/- years for date matching.  5 is the default\n";
-	print STDERR "-rb X (optional): rb is short for Range Begin, X is the starting page\n";
-	print STDERR "-re X (optional): re is short for Range End, X is the ending page\n";
+	print STDERR "-rb X (optional): rb is short for -range_begin, X is the starting page\n";
+	print STDERR "-re X (optional): re is short for -range_end, X is the ending page\n";
+	print STDERR "-pm X Y: pm is short for -pendingmerge.  X and Y are the two profile IDs to merge\n";
 	print STDERR "-h -help : print this menu\n\n";
 	print STDERR "\n";
 	exit(0);
@@ -184,26 +185,20 @@ sub todaysDate() {
 }
 
 # This isn't working yet
-sub geniLoginAPI($$) {
-	my $username = shift;
-	my $password = shift;
-
+sub geniLoginAPI() {
 	$m->cookie_jar(HTTP::Cookies->new());
-	$m->post("https://www.geni.com/login/in&username=$username&password=$password");
+	$m->post("https://www.geni.com/login/in&username=$env{'username'}&password=$env{'password'}");
 }
 
 #
 # Do a secure login into geni
 #
-sub geniLogin($$) {
-	my $username = shift;
-	my $password = shift;
-	
+sub geniLogin() {
 	$m->cookie_jar(HTTP::Cookies->new());
 	$m->get("https://www.geni.com/login");
 	$m->form_number(2);
-	$m->field("profile[username]" => $username);
-	$m->field("profile[password]" => $password);
+	$m->field("profile[username]" => $env{'username'});
+	$m->field("profile[password]" => $env{'password'});
 	$m->click();
 	
 	my $login_fh = createWriteFH("", "$env{'datadir'}/login.html", 0);
@@ -242,6 +237,13 @@ sub jsonSanityCheck($) {
 
 	# Some profiles are private and we cannot access them
 	if ($json_data =~ /Access denied/i) {
+		return 0;
+	}
+
+	# I've only seen this once.  Not sure what the trigger is or if the
+	# sleep will fix it.
+	if ($json_data =~ /500 read timeout/i) {
+		sleep(10);
 		return 0;
 	}
 
@@ -837,12 +839,47 @@ sub updateGetHistory() {
 	undef $get_history_fh;
 }
 
+sub analyzePendingMerge($$$$) {
+	my $profiles_url	= shift;
+	my $merge_url_api	= shift;
+	my $id1			= shift;
+	my $id2			= shift;
+
+	my $filename = sprintf("$env{'datadir'}/%s-%s.json", $id1, $id2);
+print STDERR "analyzePendingMerge called with id1($id1) id2($id2)\n";
+
+	# The only time these will be blank is if the user runs the script on one
+	# specific merge via the command line. The format for the urls are:
+	#
+	# profiles":"http://www.geni.com/api/profiles/compare/6000000001544613257,6000000009512261247"
+	# merge_url":"http://www.geni.com/api/profiles/merge/6000000001544613257,6000000009512261247"
+	if ($profiles_url eq "" || $merge_url_api eq "") {
+		$profiles_url = "http://www.geni.com/api/profiles/compare/$id1,$id2";
+		$merge_url_api = "http://www.geni.com/api/profiles/merge/$id1,$id2";
+print STDERR "profiles_url: $profiles_url\n";
+print STDERR "merge_url_api: $merge_url_api\n";
+	}
+
+	# http://www.geni.com/merge/compare/6000000004086345876?return=merge_center&to=5659624823800046253
+	my $merge_url_html = "<a href=\"http://www.geni.com/merge/compare/$id2?return=merge_center&to=$id1\">http://www.geni.com/merge/compare/$id1?return=merge_center&to=$id2</a>";
+	printDebug($DBG_NONE, "$merge_url_html\n");
+	getPage($filename, $profiles_url);
+
+	if (compareProfiles($filename)) {
+		my $merge_log_entry = sprintf("%s : %s : %s", $env{'username'}, localtime(), $merge_url_html);
+		$env{'matches'}++;
+		printDebug($DBG_PROGRESS, "<b>MERGING: $merge_log_entry</b>\n");
+		printf $merge_log_fh "$merge_log_entry\n";
+		$m->post($merge_url_api);
+		updateGetHistory();
+	}
+}
+
 #
 # Loop through every page of pending merges and analyze all
 # merges listed on each page. This can take days....
 #
-sub traversePendingMergePages($$$) {
-	my $username	= shift;
+sub traversePendingMergePages($$) {
 	my $range_begin	= shift;
 	my $range_end	= shift;
 	my $max_page	= getMaxPage();
@@ -893,21 +930,7 @@ sub traversePendingMergePages($$$) {
 			printDebug($DBG_URLS, "merge_url_api: $merge_url_api\n" );
 
 			if ($profiles_url =~ /\/(\d+),(\d+)$/) {
-				$filename = sprintf("$env{'datadir'}/%s-%s.json", $1, $2);
-
-				# http://www.geni.com/merge/compare/6000000004086345876?return=merge_center&to=5659624823800046253
-                                my $merge_url_html = "<a href=\"http://www.geni.com/merge/compare/$2?return=merge_center&to=$1\">http://www.geni.com/merge/compare/$1?return=merge_center&to=$2</a>";
-				printDebug($DBG_NONE, "$merge_url_html\n");
-				getPage($filename, $profiles_url);
-
-				if (compareProfiles($filename)) {
-					my $merge_log_entry = sprintf("%s : %s : %s", $username, localtime(), $merge_url_html);
-					$env{'matches'}++;
-					printDebug($DBG_PROGRESS, "<b>MERGING: $merge_log_entry</b>\n");
-					printf $merge_log_fh "$merge_log_entry\n";
-					$m->post($merge_url_api);
-					updateGetHistory();
-				}
+				analyzePendingMerge($profiles_url, $merge_url_api, $1, $2);
 			}
 			printDebug($DBG_NONE, "\n");
 		} # End of json_profile_pair for loop
@@ -928,23 +951,29 @@ sub traversePendingMergePages($$$) {
 
 
 sub main() {
-	my $username = "";
-	my $password = "";
-	my $range_begin = 0;
-	my $range_end = 0;
+	$env{'username'}	= "";
+	$env{'password'}	= "";
+	my $range_begin		= 0;
+	my $range_end		= 0;
+	my $left_id		= 0;
+	my $right_id		= 0;
 
 	#
 	# Parse all command line arguements
 	#
 	for (my $i = 0; $i <= $#ARGV; $i++) {
 		if ($ARGV[$i] eq "-u" || $ARGV[$i] eq "-username") {
-			$username = $ARGV[++$i];
+			$env{'username'} = $ARGV[++$i];
 
 		} elsif ($ARGV[$i] eq "-p" || $ARGV[$i] eq "-password") {
-			$password = $ARGV[++$i];
+			$env{'password'} = $ARGV[++$i];
 
 		} elsif ($ARGV[$i] eq "-c" || $ARGV[$i] eq "-circa") {
 			$env{'circa_range'} = $ARGV[++$i];
+
+		} elsif ($ARGV[$i] eq "-pm" || $ARGV[$i] eq "-pendingmerge") {
+			$left_id = $ARGV[++$i];
+			$right_id = $ARGV[++$i];
 
 		} elsif ($ARGV[$i] eq "-rb") {
 			$range_begin = $ARGV[++$i];
@@ -967,21 +996,30 @@ sub main() {
 		}
 	}
 
-	if (!$username) {
+	if (!$env{'username'}) {
 		print STDERR "\nERROR: username is blank.  You must specify your geni username via '-u username'\n";
 		exit();
 	}
 
-	if (!$password) {
+	if (!$env{'password'}) {
 		print STDERR "\nERROR: password is blank.  You must specify your geni password via '-p password'\n";
+		exit();
+	}
+
+	if (($left_id && !$right_id) || (!$left_id && $right_id)) {
+		print STDERR "\nERROR: You must specify two profile IDs, you only specified one\n";
 		exit();
 	}
 
 	print $merge_log_fh "<pre>";
 	print $debug_fh "<pre>";
-	# geniLoginAPI($username, $password); # Go ahead and login so the user will know now if they mistyped their password
-	geniLogin($username, $password); # Go ahead and login so the user will know now if they mistyped their password
-	traversePendingMergePages($username, $range_begin, $range_end);
+	# geniLoginAPI(); # Go ahead and login so the user will know now if they mistyped their password
+	geniLogin(); # Go ahead and login so the user will know now if they mistyped their password
+	if ($left_id && $right_id) {
+		analyzePendingMerge("", "", $left_id, $right_id);
+	} else {
+		traversePendingMergePages($range_begin, $range_end);
+	}
 	geniLogout();
 
 	my $end_time = time();
