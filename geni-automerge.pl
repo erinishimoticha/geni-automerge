@@ -75,7 +75,10 @@ sub init(){
 		death_year		=> '$',
 		death_date		=> '$',
 		death_location		=> '$',
-		partners		=> '$'
+		id			=> '$',
+		fathers			=> '$',
+		mothers			=> '$',
+		spouses			=> '$'
 	});
 
 	# It is a long story but for now don't merge profiles managed by the following:
@@ -443,11 +446,15 @@ sub dateMatches($$) {
 	my $date1 = shift;
 	my $date2 = shift;
 
-	printDebug($DBG_MATCH_DATE, "DATES: date1 ($date1), date2($date2)");
 	if ($date1 eq $date2) {
-		printDebug($DBG_MATCH_DATE, "  MATCHED\n");
+		# To reduce debug output, don't print the debug when both are "" 
+		if ($date1 ne "") {
+			printDebug($DBG_MATCH_DATE, "DATES: date1 ($date1), date2($date2) MATCHED\n");
+		}
 		return 1;
 	}
+
+	printDebug($DBG_MATCH_DATE, "DATES: date1 ($date1), date2($date2)");
 
 	# If one date is blank and the other is not then we consider one to be more specific than the other
 	if (($date1 ne "" && $date2 eq "") ||
@@ -487,15 +494,13 @@ sub dateMatches($$) {
 		$circa = 1;
 	}
 
-	if ($debug{$DBG_MATCH_DATE}) {
-		printDebug($DBG_MATCH_DATE, "\n date1_month: $date1_month\n");
-		printDebug($DBG_MATCH_DATE, " date1_day  : $date1_day\n");
-		printDebug($DBG_MATCH_DATE, " date1_year : $date1_year\n");
-		printDebug($DBG_MATCH_DATE, " date2_month: $date2_month\n");
-		printDebug($DBG_MATCH_DATE, " date2_day  : $date2_day\n");
-		printDebug($DBG_MATCH_DATE, " date2_year : $date2_year\n");
-		printDebug($DBG_MATCH_DATE, " circa		: $circa\n\n");
-	}
+	printDebug($DBG_MATCH_DATE, "\n date1_month: $date1_month\n");
+	printDebug($DBG_MATCH_DATE, " date1_day  : $date1_day\n");
+	printDebug($DBG_MATCH_DATE, " date1_year : $date1_year\n");
+	printDebug($DBG_MATCH_DATE, " date2_month: $date2_month\n");
+	printDebug($DBG_MATCH_DATE, " date2_day  : $date2_day\n");
+	printDebug($DBG_MATCH_DATE, " date2_year : $date2_year\n");
+	printDebug($DBG_MATCH_DATE, " circa      : $circa\n\n");
 
 	if (yearInRange($date1_year, $date2_year, $circa)) {
 		if ($date1_month == $date2_month) {
@@ -722,6 +727,35 @@ sub removeMiscSpaces($) {
 	return $string;
 }
 
+sub comparePartners($$$) {
+	my $partner_type	= shift;
+	my $left_partners	= shift;
+	my $right_partners	= shift;
+
+	if (($left_partners && !$right_partners) || (!$left_partners && $right_partners)) { 
+		return 1;
+	}
+
+	if ($left_partners ne $right_partners) { 
+		printDebug($DBG_MATCH_BASIC, "Profile $partner_type DO NOT match.\n");
+
+		printDebug($DBG_MATCH_BASIC, "Left Profile $partner_type:\n");
+		foreach my $person (split(/:/, $left_partners)) {
+			printDebug($DBG_MATCH_BASIC, "- $person\n");
+		}
+
+		printDebug($DBG_MATCH_BASIC, "Right Profile $partner_type:\n");
+		foreach my $person (split(/:/, $right_partners)) {
+			printDebug($DBG_MATCH_BASIC, "- $person\n");
+		}
+
+		return 0;
+	}
+
+	return 1;
+}
+
+
 sub compareProfiles($) {
 	my $filename = shift;
 
@@ -757,6 +791,7 @@ sub compareProfiles($) {
 			}
 		}
 
+		my $profile_id = $json_profile->{'focus'}->{'id'};
 		$geni_profile->name_first(removeMiscSpaces($json_profile->{'focus'}->{'first_name'}));
 		$geni_profile->name_middle(removeMiscSpaces($json_profile->{'focus'}->{'middle_name'}));
 		$geni_profile->name_last(removeMiscSpaces($json_profile->{'focus'}->{'last_name'}));
@@ -769,32 +804,74 @@ sub compareProfiles($) {
 		$geni_profile->birth_date($json_profile->{'focus'}->{'birth_date'});
 		$geni_profile->birth_year($json_profile->{'focus'}->{'birth_year'});
 		
-		my %partners_hash;
+		my %fathers_hash;
+		my %mothers_hash;
+		my %spouses_hash;
 		foreach my $i (keys %{$json_profile->{'nodes'}}) {
 			if ($i !~ /union/) {
 				next;
 			}
-			my $union_type = $json_profile->{'nodes'}->{$i}->{'status'}; # spouse or partner
+
+			my $partner_type = "";
+			# The "partners" will be parents
+			if ($json_profile->{'nodes'}->{$i}->{'edges'}->{"profile-$profile_id"}->{'rel'} eq "child") {
+				$partner_type = "parents";
+
+			# The "partners" will be spouses 
+			} elsif ($json_profile->{'nodes'}->{$i}->{'edges'}->{"profile-$profile_id"}->{'rel'} eq "partner") {
+				$partner_type = "spouses";
+			}
+
+			# So far spouse and ex_spouse are the only two types I've seen
+			my $union_type = $json_profile->{'nodes'}->{$i}->{'status'};
 			if ($union_type ne "spouse" && $union_type ne "ex_spouse") {
 				next;
 			}
 			
 			foreach my $j (keys %{$json_profile->{'nodes'}->{$i}->{'edges'}}) {
+				# The profile that we are analyzing will be listed in the union,
+				# just skip over it
+				if ($j eq "profile-$profile_id") {
+					next;
+				}
+
+				# We're ignoring children and siblings for now
 				my $rel = $json_profile->{'nodes'}->{$i}->{'edges'}->{$j}->{'rel'};
 				if ($rel ne "partner") {
 					next;
 				}
+
 				my $name = lc($json_profile->{'nodes'}->{$j}->{'name'});
-				$partners_hash{$name} = 1;
+				if ($partner_type eq "parents") {
+					if ($json_profile->{'nodes'}->{$j}->{'gender'} eq "male") {
+						$fathers_hash{$name} = 1;
+					} elsif ($json_profile->{'nodes'}->{$j}->{'gender'} eq "female") {
+						$mothers_hash{$name} = 1;
+					}
+				} elsif ($partner_type eq "spouses") {
+					$spouses_hash{$name} = 1;
+				}
 			}
 		}
 	
-		my @partners_array;
-		foreach my $i (sort keys %partners_hash) {
-			push @partners_array, $i;
+		my @fathers_array;
+		foreach my $i (sort keys %fathers_hash) {
+			push @fathers_array, $i;
+		}
+
+		my @mothers_array;
+		foreach my $i (sort keys %mothers_hash) {
+			push @mothers_array, $i;
+		}
+
+		my @spouses_array;
+		foreach my $i (sort keys %spouses_hash) {
+			push @spouses_array, $i;
 		}
 	
-		$geni_profile->partners(join(":", @partners_array));
+		$geni_profile->fathers(join(":", @fathers_array));
+		$geni_profile->mothers(join(":", @mothers_array));
+		$geni_profile->spouses(join(":", @spouses_array));
 		$geni_profile = $right_profile;
 	}
 
@@ -802,27 +879,29 @@ sub compareProfiles($) {
 		return 0;
 	}
 
-	if ($left_profile->partners() ne $right_profile->partners()) { 
-		printDebug($DBG_MATCH_BASIC, "Profile parents/spouses DO NOT match.\n");
+	# printf "Fathers:\n";
+	# printf "-left  : %s\n", $left_profile->fathers;
+	# printf "-right : %s\n", $right_profile->fathers;
 
-		printDebug($DBG_MATCH_BASIC, "Left Profile parents and spouses:\n");
-		foreach my $person (split(/:/, $left_profile->partners())) {
-			printDebug($DBG_MATCH_BASIC, "- $person\n");
-		}
+	# printf "Mothers:\n";
+	# printf "-left  : %s\n", $left_profile->mothers;
+	# printf "-right : %s\n", $right_profile->mothers;
 
-		printDebug($DBG_MATCH_BASIC, "Right Profile parents and spouses:\n");
-		foreach my $person (split(/:/, $right_profile->partners())) {
-			printDebug($DBG_MATCH_BASIC, "- $person\n");
-		}
+	# printf "Spouses:\n";
+	# printf "-left  : %s\n", $left_profile->spouses;
+	# printf "-right : %s\n", $right_profile->spouses;
 
+        if (!comparePartners("fathers", $left_profile->fathers, $right_profile->fathers)) {
 		return 0;
 	}
 
-	# We've already merged this one
-	#if (-e $screen_scrape_filename) {
-	#	printDebug($DBG_NONE, "Profile parents/spouses DO match but we've already merged this one\n");
-	#	return 0;
-	#}
+        if (!comparePartners("mothers", $left_profile->mothers, $right_profile->mothers)) {
+		return 0;
+	}
+
+        if (!comparePartners("spouses", $left_profile->spouses, $right_profile->spouses)) {
+		return 0;
+	}
 
 	printDebug($DBG_MATCH_BASIC, "Profile parents/spouses DO match\n");
 	return 1;
@@ -846,7 +925,6 @@ sub analyzePendingMerge($$$$) {
 	my $id2			= shift;
 
 	my $filename = sprintf("$env{'datadir'}/%s-%s.json", $id1, $id2);
-print STDERR "analyzePendingMerge called with id1($id1) id2($id2)\n";
 
 	# The only time these will be blank is if the user runs the script on one
 	# specific merge via the command line. The format for the urls are:
@@ -856,19 +934,21 @@ print STDERR "analyzePendingMerge called with id1($id1) id2($id2)\n";
 	if ($profiles_url eq "" || $merge_url_api eq "") {
 		$profiles_url = "http://www.geni.com/api/profiles/compare/$id1,$id2";
 		$merge_url_api = "http://www.geni.com/api/profiles/merge/$id1,$id2";
-print STDERR "profiles_url: $profiles_url\n";
-print STDERR "merge_url_api: $merge_url_api\n";
 	}
 
 	# http://www.geni.com/merge/compare/6000000004086345876?return=merge_center&to=5659624823800046253
-	my $merge_url_html = "<a href=\"http://www.geni.com/merge/compare/$id2?return=merge_center&to=$id1\">http://www.geni.com/merge/compare/$id1?return=merge_center&to=$id2</a>";
+	my $merge_url_html = "<a href=\"http://www.geni.com/merge/compare/$id1?return=merge_center&to=$id2\">http://www.geni.com/merge/compare/$id1?return=merge_center&to=$id2</a>";
 	printDebug($DBG_NONE, "$merge_url_html\n");
 	getPage($filename, $profiles_url);
 
 	if (compareProfiles($filename)) {
-		my $merge_log_entry = sprintf("%s : %s : %s", $env{'username'}, localtime(), $merge_url_html);
+		(my $sec, my $min, my $hour, my $mday, my $mon, my $year, my $wday, my $yday, my $isdst) = localtime(time);
+		my $merge_log_entry =
+			sprintf("%s : %4d-%02d-%02d %02d:%02d:%02d : %s",
+				$env{'username'}, $year+1900, $mon+1, $mday,
+				$hour, $min, $sec, $merge_url_html);
 		$env{'matches'}++;
-		printDebug($DBG_PROGRESS, "<b>MERGING: $merge_log_entry</b>\n");
+		printDebug($DBG_PROGRESS, "MERGING: $id1 and $id2\n");
 		printf $merge_log_fh "$merge_log_entry\n";
 		$m->post($merge_url_api);
 		updateGetHistory();
