@@ -7,6 +7,7 @@ use Class::Struct;
 use IO::File;
 use Time::HiRes;
 use JSON;
+# use Text::Unaccent;
 
 # globals and constants
 my (%env, %debug, $debug_fh, $merge_log_fh, $m, %blacklist_managers);
@@ -15,6 +16,8 @@ my $DBG_NONE			= "DBG_NONE"; # Normal output
 my $DBG_PROGRESS		= "DBG_PROGRESS";
 my $DBG_URLS			= "DBG_URLS";
 my $DBG_IO			= "DBG_IO";
+my $DBG_NAMES			= "DBG_NAMES";
+my $DBG_JSON			= "DBG_JSON";
 my $DBG_MATCH_DATE		= "DBG_MATCH_DATE";
 my $DBG_MATCH_BASIC		= "DBG_MATCH_BASIC";
 
@@ -52,12 +55,16 @@ sub init(){
 	$debug{"file_" . $DBG_PROGRESS}		= 1;
 	$debug{"file_" . $DBG_IO}		= 0;
 	$debug{"file_" . $DBG_URLS}		= 1;
+	$debug{"file_" . $DBG_NAMES}		= 1;
+	$debug{"file_" . $DBG_JSON}		= 0;
 	$debug{"file_" . $DBG_MATCH_BASIC}	= 1;
 	$debug{"file_" . $DBG_MATCH_DATE}	= 1;
 	$debug{"console_" . $DBG_NONE}		= 0;
 	$debug{"console_" . $DBG_PROGRESS}	= 1;
 	$debug{"console_" . $DBG_IO}		= 0;
 	$debug{"console_" . $DBG_URLS}		= 0;
+	$debug{"console_" . $DBG_NAMES}		= 0;
+	$debug{"console_" . $DBG_JSON}		= 0;
 	$debug{"console_" . $DBG_MATCH_BASIC}	= 0;
 	$debug{"console_" . $DBG_MATCH_DATE}	= 0;
 
@@ -234,7 +241,8 @@ sub jsonSanityCheck($) {
 
 	# We "should" never hit this
 	if ($json_data =~ /Rate limit exceeded/i) {
-		gracefulExit("ERROR: 'Rate limit exceeded' for '$filename'\n");
+		printDebug($DBG_PROGRESS, "ERROR: 'Rate limit exceeded' for '$filename'\n");
+		sleep(10);
 		return 0;
 	}
 
@@ -262,6 +270,13 @@ sub jsonSanityCheck($) {
 
 	if ($json_data =~/an't connect to www/) {
 		printDebug($DBG_NONE, "ERROR: 'Can't connect to www' for '$filename'\n");
+		return 0;
+	}
+
+	# This should catch any other hosed json file before we hand it to the JSON
+	# code which will crash the script when it sees the corrupted data.
+	if ($json_data !~ /^\[\{.*\}\]$/) {
+		printDebug($DBG_NONE, "ERROR: Unknown json format '$json_data' for '$filename'\n");
 		return 0;
 	}
 
@@ -521,49 +536,245 @@ sub dateMatches($$) {
 	return 0;
 }
 
+sub cleanupNameGuts($) {
+	my $name = shift;
+	$name = lc($name);
+
+	# Remove everything in ""s
+	while ($name =~ /\".*?\"/) {
+		$name = $` . " " . $';
+	}
+
+	# Remove everything in ''s
+	while ($name =~ /\'.*?\'/) {
+		$name = $` . " " . $';
+	}
+
+	# Remove punctuation
+	$name =~ s/\./ /g;
+	$name =~ s/\,/ /g;
+	$name =~ s/\'/ /g;
+	$name =~ s/\^/ /g;
+	$name =~ s/\(/ /g; # Note: If there were a ( and ) they would have already been removed
+	$name =~ s/\)/ /g; # but it is possible to have one or the other
+
+	# todo: uncomment this when you can make it so it doesn't
+	# remove the middle initials "I", "V", or "X" 
+	#
+	# Remove "II", "IV", etc
+#	 if ($name =~ /\b[ixv]+\b/) {
+#		$name = $` . " " . $';
+#	}
+
+	# Remove 1st, 2nd, 3rd, 1900, 1750, etc
+	if ($name =~ /\b\d+(st|nd|rd|th)*\b/) {
+		$name = $` . " " . $';
+	}
+
+	my @strings_to_remove = ("di", "de", "of", "av", "la", "le", "du",
+				"nn", "unknown", "<unknown>", "unk",
+				"dau", "wife", "mr", "mrs", "miss",
+				"lord", "duke", "earl", "prince", "princess", "king", "queen", "baron",
+				"csa", "general", "gen", "president", "pres", "countess",
+				"sir", "knight", "reverend", "rev", "count", "ct", "cnt",
+				"jr", "sr", "junior", "senior");
+	foreach my $rm_string (@strings_to_remove) {
+		while ($name =~ /^$rm_string /) {
+			$name = $';
+		}
+		while ($name =~ / $rm_string$/) {
+			$name = $`;
+		}
+		while ($name =~ / $rm_string /) {
+			$name = $` . " " . $';
+		}
+	}
+
+	# Remove double (or more) whitespaces
+	while ($name =~ /\s\s/) {
+		$name = $` . " " . $';
+	}
+
+	# Remove leading whitespaces
+	$name =~ s/^\s+//;
+
+	# Remove trailing whitespaces
+	$name =~ s/\s+$//;
+
+	# Research this some....it was introducing odd control characters
+	# Remove accent marks
+	# $name = unac_string_utf16($name);
+
+	# Combine repeating names like "Robert Robert"
+	my $prev_name_comp = "";
+	my $final_name = "";
+	foreach my $name_comp (split(/ /, $name)) {
+		if ($name_comp ne $prev_name_comp) {
+			$final_name .= " " if $final_name;
+			$final_name .= $name_comp;
+		}
+		$prev_name_comp = $name_comp;
+	}
+	return $final_name;
+}
+
 #
 # Construct names consistently 
 #
-sub cleanupNames($$$$$) {
-	my $gender	= shift;
+sub cleanupName($$$$) {
 	my $first	= shift;
 	my $middle	= shift;
 	my $last	= shift;
 	my $maiden	= shift;
+	my $name	= "";
 
-	# printDebug($DBG_NONE, "cleanupNames with first($first) middle($middle) last($last) maiden($maiden)\n";
-	my $name_whole = lc($first);
+	printDebug($DBG_NAMES, "cleanupName: Initial Name: first '$first', middle '$middle', last '$last', maiden '$maiden'\n");
 
-	if ($gender eq "female" && $maiden ne "") {
-		$last = $maiden;
-	}
-
-	if ($middle) {
-		if ($name_whole) {
-			$name_whole .= " ";
+	# The entire name was passed in as one string.  I've asked Amos if they can
+	# always pass us first/middle/last/maiden individually. Haven't heard back
+	# from about it yet though.
+	if ($first ne "" && $middle eq "" && $last eq "" && $maiden eq "") {
+		# The maiden name should be in ()s
+		if ($first =~ /\((.*)\)/) {
+			$maiden = $1;
+			$first = $` . " " . $';
 		}
-		$name_whole .=	lc($middle);
+	}
+	$name = $first if $first;
+	$name .= " $middle" if $middle;
+	$name .= " $last" if $last;
+
+	$name = cleanupNameGuts($name);
+	$maiden = cleanupNameGuts($maiden);
+	$name .= " ($maiden)" if $maiden;
+
+	printDebug($DBG_NAMES, "cleanupName: Standardized name '$name'\n\n");
+	return $name;
+}
+
+# Return TRUE if they match
+sub initialVsWholeMatch($$) {
+	my $left_name	= shift;
+	my $right_name	= shift;
+
+	# If one profile has the name "M" and the other has "Mark" then we
+	# should consider that a match.
+	if ($left_name =~ /^\w$/) {
+		return ($right_name =~ /^$left_name/);
+	} elsif ($right_name =~ /^\w$/) {
+		return ($left_name =~ /^$right_name/);
 	}
 
-	if ($last) {
-		if ($name_whole) {
-			$name_whole .= " ";
+	return 0;
+}
+
+# Return TRUE if they match
+sub compareNames($$$) {
+	my $gender	= shift;
+	my $left_name	= shift;
+	my $right_name	= shift;
+
+	if (($left_name && !$right_name) ||
+	    (!$left_name && $right_name) ||
+	    ($left_name eq $right_name)) {
+		return 1;
+	}
+
+	my $left_name_first	= "";
+	my $left_name_middle	= "";
+	my $left_name_last	= "";
+	my $left_name_maiden	= "";
+
+	if ($left_name =~ / \((.*)\)$/) {
+		$left_name_maiden = $1;
+		$left_name = $`;
+	}
+
+	if ($left_name =~ /^(\w+)\s(\w+)\s(\w+)$/) {
+		$left_name_first = $1;
+		$left_name_middle = $2;
+		$left_name_last= $3;
+	} elsif ($left_name =~ /^(\w+)\s(\w+)$/) {
+		$left_name_first = $1;
+		$left_name_last= $2;
+	} elsif ($left_name =~ /^(\w+)$/) {
+		$left_name_first = $1;
+	# This will happen when the profile has multiple middle names
+	} elsif ($left_name =~ /^(\w+)\s(.*)\s(\w+)$/) {
+		$left_name_first = $1;
+		$left_name_middle = $2;
+		$left_name_last= $3;
+	}
+
+	my $right_name_first	= "";
+	my $right_name_middle	= "";
+	my $right_name_last	= "";
+	my $right_name_maiden	= "";
+
+	if ($right_name =~ / \((.*)\)$/) {
+		$right_name_maiden = $1;
+		$right_name = $`;
+	}
+
+	if ($right_name =~ /^(\w+)\s(\w+)\s(\w+)$/) {
+		$right_name_first = $1;
+		$right_name_middle = $2;
+		$right_name_last= $3;
+	} elsif ($right_name =~ /^(\w+)\s(\w+)$/) {
+		$right_name_first = $1;
+		$right_name_last= $2;
+	} elsif ($right_name =~ /^(\w+)$/) {
+		$right_name_first = $1;
+	# This will happen when the profile has multiple middle names
+	} elsif ($right_name =~ /^(\w+)\s(.*)\s(\w+)$/) {
+		$right_name_first = $1;
+		$right_name_middle = $2;
+		$right_name_last= $3;
+	}
+
+	# todo: We should look into using soundex below to compare the names intead of "eq"
+	my $first_name_matches = 0;
+	if (($left_name_first && !$right_name_first) ||
+	    (!$left_name_first && $right_name_first) ||
+	    ($left_name_first eq $right_name_first) ||
+	    initialVsWholeMatch($left_name_first, $right_name_first)) {
+		$first_name_matches = 1;
+	}
+
+	my $middle_name_matches = 0;
+	if (($left_name_middle && !$right_name_middle) ||
+	    (!$left_name_middle && $right_name_middle) ||
+	    ($left_name_middle eq $right_name_middle) ||
+	    initialVsWholeMatch($left_name_middle, $right_name_middle)) {
+		$middle_name_matches = 1;
+	}
+
+	my $last_name_matches = 0;
+	if ($gender eq "female") {
+		# Jane Smith (Doe) vs. Jane Doe
+		# If either last name matches either maiden name its a match
+		if (($left_name_maiden eq $right_name_maiden) ||
+		    ($left_name_maiden eq $right_name_last) ||
+		    ($left_name_last eq $right_name_last) ||
+		    ($left_name_last eq $right_name_maiden)) {
+			$last_name_matches = 1;
+
+		# If one side doesn't have a last/maiden name but the other does then its a match
+		} elsif ((!$left_name_maiden && !$left_name_last) && ($right_name_maiden || $right_name_last) ||
+			 ($left_name_maiden || $left_name_last) && (!$right_name_maiden && !$right_name_last)) {
+			$last_name_matches = 1;
 		}
-		$name_whole .=  lc($last);
+
+	} else {
+		if (($left_name_last && !$right_name_last) ||
+		    (!$left_name_last && $right_name_last) ||
+		    ($left_name_last eq $right_name_last)) {
+			$last_name_matches = 1;
+		}
 	}
 
-	$name_whole  =~ s/ de / /;
-
-	my $name_nomiddle = "";
-	if ($name_whole =~ /^(.+)\s.+\s(.+)$/) {
-		$name_nomiddle = $1 . " " . $2;
-	} elsif ($name_whole =~ /^(.+)\s(.+)$/) {
-		$name_nomiddle = $1 . " " . $2;
-	} elsif ($name_whole =~ /^(.+)$/) {
-		$name_nomiddle = $1;
-	}
-
-	return ($name_whole, $name_nomiddle);
+	printDebug($DBG_NAMES, "compareNames: left '$left_name ($left_name_maiden)', right '$right_name ($right_name_maiden)', first_match($first_name_matches), middle_match($middle_name_matches), last_match($last_name_matches)\n");
+	return ($first_name_matches && $middle_name_matches && $last_name_matches);
 }
 
 #
@@ -574,47 +785,39 @@ sub profileBasicsMatch($$) {
 	my $right_profile = shift;
 	my $score = 0;
 
-	(my $left_name_whole, my $left_name_nomiddle) = 
-		cleanupNames($left_profile->gender,
-			$left_profile->name_first,
+	my $left_name = 
+		cleanupName($left_profile->name_first,
 			$left_profile->name_middle,
 			$left_profile->name_last,
 			$left_profile->name_maiden);
 
-	(my $right_name_whole, my $right_name_nomiddle) =
-		cleanupNames($right_profile->gender,
-			$right_profile->name_first,
+	my $right_name =
+		cleanupName($right_profile->name_first,
 			$right_profile->name_middle,
 			$right_profile->name_last,
 			$right_profile->name_maiden);
 
-	if ($left_name_whole ne $right_name_whole &&
-		$left_name_nomiddle ne $right_name_nomiddle) {
-
-		printDebug($DBG_MATCH_BASIC,
-			sprintf("profileBasicsMatch(name): '%s' ne '%s'\n",
-				$left_name_whole,
-				$right_name_whole));
-		# printDebug($DBG_MATCH_BASIC, "left_name_whole: $left_name_whole\n";
-		# printDebug($DBG_MATCH_BASIC, "right_name_whole: $right_name_whole\n";
-		# printDebug($DBG_MATCH_BASIC, "left_name_nomiddle: $left_name_nomiddle\n";
-		# printDebug($DBG_MATCH_BASIC, "right_name_nomiddle: $right_name_nomiddle\n";
-		return 0;
-	}
-
 	if ($left_profile->gender ne $right_profile->gender) {
 		printDebug($DBG_MATCH_BASIC,
 			sprintf("profileBasicsMatch(gender): %s's '%s' does not equal '%s'\n",
-				$left_name_whole,
+				$left_name,
 				$left_profile->gender,
 				$right_profile->gender));
+		return 0;
+	}
+
+	if (!compareNames($left_profile->gender, $left_name, $right_name)) {
+		printDebug($DBG_MATCH_BASIC,
+			sprintf("profileBasicsMatch(name): '%s' ne '%s'\n",
+				$left_name,
+				$right_name));
 		return 0;
 	}
 
 	if ($left_profile->living ne $right_profile->living) {
 		printDebug($DBG_MATCH_BASIC,
 			sprintf("profileBasicsMatch(living): %s's '%s' does not equal '%s'\n",
-				$left_name_whole,
+				$left_name,
 				$left_profile->living,
 				$right_profile->living));
 		return 0;
@@ -623,7 +826,7 @@ sub profileBasicsMatch($$) {
 	if (!dateMatches($left_profile->death_year, $right_profile->death_year)) {
 		printDebug($DBG_MATCH_BASIC,
 			sprintf("profileBasicsMatch(death_date): %s's death year '%s' does not equal '%s'\n",
-				$left_name_whole,
+				$left_name,
 				$left_profile->death_year,
 				$right_profile->death_year));
 		return 0;
@@ -632,7 +835,7 @@ sub profileBasicsMatch($$) {
 	if (!dateMatches($left_profile->death_date, $right_profile->death_date)) {
 		printDebug($DBG_MATCH_BASIC,
 			sprintf("profileBasicsMatch(death_date): %s's death date '%s' does not equal '%s'\n",
-				$left_name_whole,
+				$left_name,
 				$left_profile->death_date,
 				$right_profile->death_date));
 		return 0;
@@ -641,7 +844,7 @@ sub profileBasicsMatch($$) {
 	if (!dateMatches($left_profile->birth_year, $right_profile->birth_year)) {
 		printDebug($DBG_MATCH_BASIC,
 			sprintf("profileBasicsMatch(birth_year): %s's birth year '%s' does not equal '%s'\n",
-				$left_name_whole,
+				$left_name,
 				$left_profile->birth_year,
 				$right_profile->birth_year));
 		return 0;
@@ -650,29 +853,15 @@ sub profileBasicsMatch($$) {
 	if (!dateMatches($left_profile->birth_date, $right_profile->birth_date)) {
 		printDebug($DBG_MATCH_BASIC,
 			sprintf("profileBasicsMatch(birth_date): %s's birth date '%s' does not equal '%s'\n",
-				$left_name_whole,
+				$left_name,
 				$left_profile->birth_date,
 				$right_profile->birth_date));
 		return 0;
 	}
 
-	# For females the maiden name must match
-	if (lc($left_profile->gender) eq "female") {
-		if ($left_profile->name_maiden ne "" &&
-			$right_profile->name_maiden ne "" &&
-			lc($left_profile->name_maiden) ne lc($right_profile->name_maiden)) {
-			printDebug($DBG_MATCH_BASIC,
-				sprintf("profileBasicsMatch(maiden): %s's '%s' does not equal '%s'\n",
-					$left_name_whole,
-					$left_profile->name_maiden,
-					$right_profile->name_maiden));
-			return 0;
-		}
-	}
-
 	printDebug($DBG_MATCH_BASIC,
 		sprintf("profileBasicsMatch(name): %s's basic profile data matches\n",
-			$left_name_whole));
+			$left_name));
 	return 1;
 }
 
@@ -710,24 +899,8 @@ sub getMaxPage() {
 	return ($max_page);
 }
 
-#
-# Removing leading and trailing whitespaces in $string
-#
-sub removeMiscSpaces($) {
-	my $string = shift;
-	if ($string =~ /^\s+(.*)/) {
-		$string = $1;
-	}
-	if ($string =~ /(.*)\s+$/) {
-		$string = $1;
-	}
-	if ($string =~ /^\s+$/) {
-		$string = "";
-	}
-	return $string;
-}
-
-sub comparePartners($$$) {
+sub comparePartners($$$$) {
+	my $gender		= shift;
 	my $partner_type	= shift;
 	my $left_partners	= shift;
 	my $right_partners	= shift;
@@ -737,6 +910,15 @@ sub comparePartners($$$) {
 	}
 
 	if ($left_partners ne $right_partners) { 
+		foreach my $person (split(/:/, $left_partners)) {
+			foreach my $person2 (split(/:/, $right_partners)) {
+				if (compareNames($gender, $person, $person2)) {
+					printDebug($DBG_MATCH_BASIC, "One of the $partner_type is a match.\n");
+					return 1;
+				}
+            		}
+		}
+
 		printDebug($DBG_MATCH_BASIC, "Profile $partner_type DO NOT match.\n");
 
 		printDebug($DBG_MATCH_BASIC, "Left Profile $partner_type:\n");
@@ -756,6 +938,19 @@ sub comparePartners($$$) {
 }
 
 
+sub avoidDuplicatesPush($$$) {
+	my $gender	= shift;
+	my $names_array = shift;
+	my $name_to_add	= shift;
+
+	foreach my $name (@$names_array) {
+		if (compareNames($gender, $name, $name_to_add)) {
+			return;
+		}
+	}
+	push @$names_array, $name_to_add;
+}
+
 sub compareProfiles($) {
 	my $filename = shift;
 
@@ -769,7 +964,7 @@ sub compareProfiles($) {
 	my $json_text = $json->allow_nonref->utf8->relaxed->decode($json_data);
 	undef $fh;
 
-	# printDebug($DBG_NONE, sprintf ("Pretty JSON:\n%s", $json->pretty->encode($json_text)));
+	printDebug($DBG_JSON,sprintf ("Pretty JSON:\n%s", $json->pretty->encode($json_text))); 
 
 	my $left_profile = new profile;
 	my $right_profile= new profile;
@@ -785,18 +980,22 @@ sub compareProfiles($) {
 		}
 
 		# Do not merge a profile managed by any of the blacklist_managers
-                foreach my $profile_id (split(/,/, $json_profile->{'focus'}->{'managers'})) {
-			if ($blacklist_managers{$profile_id}) {
-				return 0;
-			}
+                #foreach my $profile_id (split(/,/, $json_profile->{'focus'}->{'managers'})) {
+		#	if ($blacklist_managers{$profile_id}) {
+		#		return 0;
+		#	}
+		#}
+		if (($json_profile->{'focus'}->{'managers'} =~ /6000000003753338015/) ||
+		    ($json_profile->{'focus'}->{'managers'} =~ /6000000009948172621/)) {
+			return 0;
 		}
 
 		my $profile_id = $json_profile->{'focus'}->{'id'};
-		$geni_profile->name_first(removeMiscSpaces($json_profile->{'focus'}->{'first_name'}));
-		$geni_profile->name_middle(removeMiscSpaces($json_profile->{'focus'}->{'middle_name'}));
-		$geni_profile->name_last(removeMiscSpaces($json_profile->{'focus'}->{'last_name'}));
-		$geni_profile->name_maiden(removeMiscSpaces($json_profile->{'focus'}->{'maiden_name'}));
-		$geni_profile->suffix(removeMiscSpaces($json_profile->{'focus'}->{'suffix'}));
+		$geni_profile->name_first($json_profile->{'focus'}->{'first_name'});
+		$geni_profile->name_middle($json_profile->{'focus'}->{'middle_name'});
+		$geni_profile->name_last($json_profile->{'focus'}->{'last_name'});
+		$geni_profile->name_maiden($json_profile->{'focus'}->{'maiden_name'});
+		$geni_profile->suffix($json_profile->{'focus'}->{'suffix'});
 		$geni_profile->gender($json_profile->{'focus'}->{'gender'});
 		$geni_profile->living($json_profile->{'focus'}->{'living'});
 		$geni_profile->death_date($json_profile->{'focus'}->{'death_date'});
@@ -804,9 +1003,9 @@ sub compareProfiles($) {
 		$geni_profile->birth_date($json_profile->{'focus'}->{'birth_date'});
 		$geni_profile->birth_year($json_profile->{'focus'}->{'birth_year'});
 		
-		my %fathers_hash;
-		my %mothers_hash;
-		my %spouses_hash;
+		my @fathers_array;
+		my @mothers_array;
+		my @spouses_array;
 		foreach my $i (keys %{$json_profile->{'nodes'}}) {
 			if ($i !~ /union/) {
 				next;
@@ -841,65 +1040,51 @@ sub compareProfiles($) {
 					next;
 				}
 
-				my $name = lc($json_profile->{'nodes'}->{$j}->{'name'});
+				my $gender = $json_profile->{'nodes'}->{$j}->{'gender'};
+				my $name = cleanupName($json_profile->{'nodes'}->{$j}->{'name'}, "", "", "");
 				if ($partner_type eq "parents") {
-					if ($json_profile->{'nodes'}->{$j}->{'gender'} eq "male") {
-						$fathers_hash{$name} = 1;
-					} elsif ($json_profile->{'nodes'}->{$j}->{'gender'} eq "female") {
-						$mothers_hash{$name} = 1;
+					if ($gender eq "male") {
+						avoidDuplicatesPush($gender, \@fathers_array, $name);
+					} elsif ($gender eq "female") {
+						avoidDuplicatesPush($gender, \@mothers_array, $name);
 					}
 				} elsif ($partner_type eq "spouses") {
-					$spouses_hash{$name} = 1;
+					avoidDuplicatesPush($gender, \@spouses_array, $name);
 				}
 			}
 		}
-	
-		my @fathers_array;
-		foreach my $i (sort keys %fathers_hash) {
-			push @fathers_array, $i;
-		}
 
-		my @mothers_array;
-		foreach my $i (sort keys %mothers_hash) {
-			push @mothers_array, $i;
-		}
-
-		my @spouses_array;
-		foreach my $i (sort keys %spouses_hash) {
-			push @spouses_array, $i;
-		}
-	
 		$geni_profile->fathers(join(":", @fathers_array));
 		$geni_profile->mothers(join(":", @mothers_array));
 		$geni_profile->spouses(join(":", @spouses_array));
 		$geni_profile = $right_profile;
 	}
 
+	printDebug($DBG_MATCH_BASIC, "Fathers:\n");
+	printDebug($DBG_MATCH_BASIC, sprintf("-left  : %s\n", $left_profile->fathers));
+	printDebug($DBG_MATCH_BASIC, sprintf("-right : %s\n", $right_profile->fathers));
+
+	printDebug($DBG_MATCH_BASIC, "Mothers:\n");
+	printDebug($DBG_MATCH_BASIC, sprintf("-left  : %s\n", $left_profile->mothers));
+	printDebug($DBG_MATCH_BASIC, sprintf("-right : %s\n", $right_profile->mothers));
+
+	printDebug($DBG_MATCH_BASIC, "Spouses:\n");
+	printDebug($DBG_MATCH_BASIC, sprintf("-left  : %s\n", $left_profile->spouses));
+	printDebug($DBG_MATCH_BASIC, sprintf("-right : %s\n", $right_profile->spouses));
+
 	if (profileBasicsMatch($left_profile, $right_profile) == 0) {
 		return 0;
 	}
 
-	# printf "Fathers:\n";
-	# printf "-left  : %s\n", $left_profile->fathers;
-	# printf "-right : %s\n", $right_profile->fathers;
-
-	# printf "Mothers:\n";
-	# printf "-left  : %s\n", $left_profile->mothers;
-	# printf "-right : %s\n", $right_profile->mothers;
-
-	# printf "Spouses:\n";
-	# printf "-left  : %s\n", $left_profile->spouses;
-	# printf "-right : %s\n", $right_profile->spouses;
-
-        if (!comparePartners("fathers", $left_profile->fathers, $right_profile->fathers)) {
+        if (!comparePartners("male", "fathers", $left_profile->fathers, $right_profile->fathers)) {
 		return 0;
 	}
 
-        if (!comparePartners("mothers", $left_profile->mothers, $right_profile->mothers)) {
+        if (!comparePartners("female", "mothers", $left_profile->mothers, $right_profile->mothers)) {
 		return 0;
 	}
 
-        if (!comparePartners("spouses", $left_profile->spouses, $right_profile->spouses)) {
+        if (!comparePartners("female", "spouses", $left_profile->spouses, $right_profile->spouses)) {
 		return 0;
 	}
 
@@ -911,7 +1096,6 @@ sub compareProfiles($) {
 # Update the get_history file with the current timestamp
 #
 sub updateGetHistory() {
-	# todo: add this timestamp to get_history
 	(my $time_sec, my $time_usec) = Time::HiRes::gettimeofday();
 	my $get_history_fh = createWriteFH("", $env{'history_file'}, 1);
 	print $get_history_fh "$time_sec.$time_usec\n";
@@ -953,6 +1137,10 @@ sub analyzePendingMerge($$$$) {
 		$m->post($merge_url_api);
 		updateGetHistory();
 	}
+
+	# It would be nice to keep the files around for caching purposes but the
+	# volume of files gets out of hand (30k+ in 24 hours) pretty quickly.
+	unlink $filename;
 }
 
 #
@@ -990,7 +1178,8 @@ sub traversePendingMergePages($$) {
 		getPage($filename, "http://www.geni.com/api/profiles/merges?collaborators=true&order=last_modified_at&direction=asc&page=$i");
 
 		if (jsonSanityCheck($filename) == 0) {
-			# todo: delete the file
+			# Since the file was hosed, delete it
+			unlink $filename;
 			next;
 		}
 
@@ -1054,6 +1243,7 @@ sub main() {
 		} elsif ($ARGV[$i] eq "-pm" || $ARGV[$i] eq "-pendingmerge") {
 			$left_id = $ARGV[++$i];
 			$right_id = $ARGV[++$i];
+			$debug{"file_" . $DBG_JSON} = 1;
 
 		} elsif ($ARGV[$i] eq "-rb") {
 			$range_begin = $ARGV[++$i];
@@ -1126,5 +1316,4 @@ DONE
 - measure how many req we did in the last 10 seconds
 
 TODO
-- remove 'sir', 'president', 'knight', 'of' from comparisons
 - write wiki
