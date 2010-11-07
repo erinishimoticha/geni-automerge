@@ -10,7 +10,7 @@ use JSON;
 # use Text::Unaccent;
 
 # globals and constants
-my (%env, %debug, $debug_fh, $merge_log_fh, $m, %blacklist_managers);
+my (%env, %debug, $debug_fh, $merge_log_fh, $m, %blacklist_managers, @get_history);
 my $m = WWW::Mechanize->new(autocheck => 0);
 my $DBG_NONE			= "DBG_NONE"; # Normal output
 my $DBG_PROGRESS		= "DBG_PROGRESS";
@@ -38,7 +38,6 @@ sub init(){
 	# todo: Once we are all running this script from the same machine
 	# merge_log_file needs to be the same file for all users.
 	$env{'merge_log_file'}		= "$env{'logdir'}/merge_log.html";
-	$env{'history_file'}		= "$env{'datadir'}/get_history.txt";
 	$env{'log_file'}		= "$env{'logdir'}/logfile_" . dateHourMinuteSecond() . ".html";
 	$env{'matches'} 		= 0;
 	$env{'profiles'}		= 0;
@@ -341,24 +340,16 @@ sub getPage($$) {
 	(my $time_sec, my $time_usec) = Time::HiRes::gettimeofday();
 	my $time_current = "$time_sec.$time_usec";
 
-	# todo(maybe): If I someday start running multiple copies of the
-	# script at once (per user) then use a lock file so multiple threads
-	# don't access get_history at once
+	my @new_get_history;
 	my $gets_in_last_ten_seconds = 0;
-	my @get_history;
-	if (-e $env{'history_file'}) {
-		my $get_history_fh = createReadFH($env{'history_file'});
-		while(<$get_history_fh>) {
-			chomp();
-			push @get_history, $_;
-			# print "GET_HISTORY_READ: $_\n";
-
-			if (timesInRange($time_current, $_, $env{'get_timeframe'})) {
-				$gets_in_last_ten_seconds++;
-			}
+	foreach my $timestamp (@get_history) {
+		chomp($timestamp);
+		if (timesInRange($time_current, $timestamp, $env{'get_timeframe'})) {
+			$gets_in_last_ten_seconds++;
+			push @new_get_history, $timestamp;
 		}
-		undef $get_history_fh;
 	}
+	@get_history = @new_get_history;
 
 	if ($gets_in_last_ten_seconds >= $env{'get_limit'}) {
 		printDebug($DBG_NONE, "$gets_in_last_ten_seconds gets() in the past $env{'get_timeframe'} seconds....sleeping....\n");
@@ -370,18 +361,7 @@ sub getPage($$) {
 	print $fh $m->content();
 	undef $fh;
 
-	(my $time_sec, my $time_usec) = Time::HiRes::gettimeofday();
-	$time_current = "$time_sec.$time_usec";
-
-	push @get_history, $time_current;
-	my $get_history_fh = createWriteFH("", $env{'history_file'}, 0);
-	foreach my $i (@get_history) {
-		if (timesInRange($time_current, $i, $env{'get_timeframe'} * 2)) {
-			print $get_history_fh "$i\n";
-			# print "GET_HISTORY_WRITE: $i\n";
-		}
-	}
-	undef $get_history_fh;
+	updateGetHistory();
 }
 
 #
@@ -1096,9 +1076,7 @@ sub compareProfiles($) {
 #
 sub updateGetHistory() {
 	(my $time_sec, my $time_usec) = Time::HiRes::gettimeofday();
-	my $get_history_fh = createWriteFH("", $env{'history_file'}, 1);
-	print $get_history_fh "$time_sec.$time_usec\n";
-	undef $get_history_fh;
+	push @get_history, "$time_sec.$time_usec\n";
 }
 
 sub analyzePendingMerge($$$$) {
@@ -1169,6 +1147,11 @@ sub traversePendingMergePages($$) {
 
 
 	for (my $i = $range_begin; $i <= $range_end; $i++) {
+		undef $debug_fh;
+		$env{'log_file'}	= "$env{'logdir'}/logfile_" . dateHourMinuteSecond() . "_page_$i.html";
+		$debug_fh		= createWriteFH("logfile", $env{'log_file'}, 0);
+		$debug_fh->autoflush(1);
+
 		my $loop_start_time = time();
 		my $page_profile_count = 0;
 		my $filename = "$env{'datadir'}/merge_list_$i.json";
