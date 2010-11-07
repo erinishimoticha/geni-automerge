@@ -785,10 +785,13 @@ sub compareProfiles($) {
 		}
 
 		# Do not merge a profile managed by any of the blacklist_managers
-                foreach my $profile_id (split(/,/, $json_profile->{'focus'}->{'managers'})) {
-			if ($blacklist_managers{$profile_id}) {
-				return 0;
-			}
+		#foreach my $profile_id (split(/,/, $json_profile->{'focus'}->{'managers'})) {
+		#	if ($blacklist_managers{$profile_id}) {
+		#		return 0;
+		#	}
+		#}
+		foreach (keys %blacklist_managers){
+			return 0 if join(",", split(",",$json_profile->{'focus'}->{'managers'})) =~ /$_/;
 		}
 
 		my $profile_id = $json_profile->{'focus'}->{'id'};
