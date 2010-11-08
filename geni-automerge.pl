@@ -7,10 +7,11 @@ use Class::Struct;
 use IO::File;
 use Time::HiRes;
 use JSON;
-# use Text::Unaccent;
+# http://search.cpan.org/~maurice/Text-DoubleMetaphone-0.07/DoubleMetaphone.pm
+use Text::DoubleMetaphone qw( double_metaphone );
 
 # globals and constants
-my (%env, %debug, $debug_fh, $merge_log_fh, $m, %blacklist_managers, @get_history);
+my (%env, %debug, $debug_fh, $merge_log_fh, $m, %blacklist_managers, @get_history, $name_list_fh);
 my $m = WWW::Mechanize->new(autocheck => 0);
 my $DBG_NONE			= "DBG_NONE"; # Normal output
 my $DBG_PROGRESS		= "DBG_PROGRESS";
@@ -18,6 +19,7 @@ my $DBG_URLS			= "DBG_URLS";
 my $DBG_IO			= "DBG_IO";
 my $DBG_NAMES			= "DBG_NAMES";
 my $DBG_JSON			= "DBG_JSON";
+my $DBG_PHONETICS		= "DBG_PHONETICS";
 my $DBG_MATCH_DATE		= "DBG_MATCH_DATE";
 my $DBG_MATCH_BASIC		= "DBG_MATCH_BASIC";
 
@@ -39,6 +41,7 @@ sub init(){
 	# todo: Once we are all running this script from the same machine
 	# merge_log_file needs to be the same file for all users.
 	$env{'merge_log_file'}		= "$env{'logdir'}/merge_log.html";
+	$env{'name_list_file'}		= "$env{'logdir'}/name_list.txt";
 	$env{'log_file'}		= "$env{'logdir'}/logfile_" . dateHourMinuteSecond() . ".html";
 	$env{'matches'} 		= 0;
 	$env{'profiles'}		= 0;
@@ -49,6 +52,8 @@ sub init(){
 
 	$merge_log_fh				= createWriteFH("Merge History", $env{'merge_log_file'}, 1);
 	$merge_log_fh->autoflush(1);
+	$name_list_fh				= createWriteFH("Name List", $env{'name_list_file'}, 1);
+	$name_list_fh->autoflush(1);
 	$debug_fh				= createWriteFH("logfile", $env{'log_file'}, 0);
 	$debug_fh->autoflush(1);
 	$debug{"file_" . $DBG_NONE}		= 1;
@@ -57,6 +62,7 @@ sub init(){
 	$debug{"file_" . $DBG_URLS}		= 1;
 	$debug{"file_" . $DBG_NAMES}		= 1;
 	$debug{"file_" . $DBG_JSON}		= 0;
+	$debug{"file_" . $DBG_PHONETICS}	= 0;
 	$debug{"file_" . $DBG_MATCH_BASIC}	= 1;
 	$debug{"file_" . $DBG_MATCH_DATE}	= 1;
 	$debug{"console_" . $DBG_NONE}		= 0;
@@ -65,6 +71,7 @@ sub init(){
 	$debug{"console_" . $DBG_URLS}		= 0;
 	$debug{"console_" . $DBG_NAMES}		= 0;
 	$debug{"console_" . $DBG_JSON}		= 0;
+	$debug{"console_" . $DBG_PHONETICS}	= 0;
 	$debug{"console_" . $DBG_MATCH_BASIC}	= 0;
 	$debug{"console_" . $DBG_MATCH_DATE}	= 0;
 
@@ -556,16 +563,10 @@ sub cleanupNameGuts($) {
 	$name =~ s/\,/ /g;
 	$name =~ s/\'/ /g;
 	$name =~ s/\^/ /g;
+	$name =~ s/\// /g;
+	$name =~ s/\\/ /g;
 	$name =~ s/\(/ /g; # Note: If there were a ( and ) they would have already been removed
 	$name =~ s/\)/ /g; # but it is possible to have one or the other
-
-	# todo: uncomment this when you can make it so it doesn't
-	# remove the middle initials "I", "V", or "X" 
-	#
-	# Remove "II", "IV", etc
-#	 if ($name =~ /\b[ixv]+\b/) {
-#		$name = $` . " " . $';
-#	}
 
 	# Remove 1st, 2nd, 3rd, 1900, 1750, etc
 	if ($name =~ /\b\d+(st|nd|rd|th)*\b/) {
@@ -574,10 +575,12 @@ sub cleanupNameGuts($) {
 
 	my @strings_to_remove = ("di", "de", "of", "av", "la", "le", "du",
 				"nn", "unknown", "<unknown>", "unk",
-				"dau", "wife", "mr", "mrs", "miss",
+				"daughter", "dau", "wife", "mr", "mrs", "miss", "duchess",
 				"lord", "duke", "earl", "prince", "princess", "king", "queen", "baron",
-				"csa", "general", "gen", "president", "pres", "countess",
-				"sir", "knight", "reverend", "rev", "count", "ct", "cnt",
+				"csa", "general", "gen", "president", "pres", "countess", "lieutenant", "lt",
+				"captain", "chief justice", "honorable", "hon",
+				"ii", "iii", "iv", "vi", "vii", "viii", "iix", "ix",
+				"sir", "knight", "reverend", "rev", "count", "ct", "cnt", "sheriff",
 				"jr", "sr", "junior", "senior");
 	foreach my $rm_string (@strings_to_remove) {
 		while ($name =~ /^$rm_string /) {
@@ -601,10 +604,6 @@ sub cleanupNameGuts($) {
 
 	# Remove trailing whitespaces
 	$name =~ s/\s+$//;
-
-	# Research this some....it was introducing odd control characters
-	# Remove accent marks
-	# $name = unac_string_utf16($name);
 
 	# Combine repeating words in a name like "Robert Robert" or
 	# "tiberius claudius nero claudius tiberius claudius nero" 
@@ -664,6 +663,82 @@ sub initialVsWholeMatch($$) {
 		return ($right_name =~ /^$left_name/);
 	} elsif ($right_name =~ /^\w$/) {
 		return ($left_name =~ /^$right_name/);
+	}
+
+	return 0;
+}
+
+sub oddCharCount($) {
+	my $name = shift;
+	my $odd_char_count = 0;
+	foreach my $char (split(//, $name)) {
+		if ($char !~ /^\w$/) {
+			$odd_char_count++;
+		}
+	}
+	return $odd_char_count;
+}
+
+sub doubleMetaphoneCompare($$) {
+	my $left_name	= shift;
+	my $right_name	= shift;
+
+	# Sometimes middle names will be really long and consist of multiple words.
+	# Double metaphone only looks at the first four syllables so comparing two
+	# names with multiple words could give false positives.  Better to be safe
+	# and just declare them not a match.
+	if ($left_name =~ / / || $right_name =~ / /) {
+		return 0;
+	}
+
+	# This should never happen but just to be safe
+	if ($left_name eq "" || $right_name eq "") {
+		return 0;
+	}
+
+	# If one of the names is just an initial then bail out
+	if ($left_name =~ /^.$/ || $right_name =~ /^.$/) {
+		return 0;
+	}
+
+	# Non-english names give too many false positives so if the name is full
+	# of funky characters then don't even bother running metaphone.
+	if (oddCharCount($left_name) > 2 || oddCharCount($right_name) > 2) {
+		return 0;
+	}
+
+	(my $left_code1, my $left_code2) = double_metaphone($left_name);
+	(my $right_code1, my $right_code2) = double_metaphone($right_name);
+	#printf("\n%s: %s %s\n", $left_name, $left_code1, $left_code2);
+	#printf("%s: %s %s\n", $right_name, $right_code1, $right_code2);
+
+	return (($left_code1 eq $right_code1) || ($left_code1 eq $right_code2) || ($left_code2 eq $right_code1) ||
+		($left_code2 eq $right_code2 && $left_code2));
+}
+
+sub compareNamesGuts($$$) {
+	my $compare_initials = shift;
+	my $left_name	= shift;
+	my $right_name	= shift;
+
+	if ($left_name && !$right_name) {
+		return 1;
+	}
+
+	if (!$left_name && $right_name) {
+		return 1;
+	}
+
+	if ($left_name eq $right_name) {
+		return 1;
+	}
+
+	if ($compare_initials && initialVsWholeMatch($left_name, $right_name)) {
+		return 1;
+	}
+
+	if (doubleMetaphoneCompare($left_name, $right_name)) {
+		return 1;
 	}
 
 	return 0;
@@ -733,45 +808,36 @@ sub compareNames($$$) {
 		$right_name_last= $3;
 	}
 
-	# todo: We should look into using soundex below to compare the names intead of "eq"
-	my $first_name_matches = 0;
-	if (($left_name_first && !$right_name_first) ||
-	    (!$left_name_first && $right_name_first) ||
-	    ($left_name_first eq $right_name_first) ||
-	    initialVsWholeMatch($left_name_first, $right_name_first)) {
-		$first_name_matches = 1;
+	# Store a list of pairs of names that we can use for phonetics testing
+	if ($debug{"file__" . $DBG_PHONETICS} || $debug{"console_" . $DBG_PHONETICS}) {
+		if (($left_name_first ne $right_name_first) && $left_name_first && $right_name_first) {
+			print $name_list_fh "$left_name_first\:$right_name_first\n";
+		}
+
+		if (($left_name_middle ne $right_name_middle) && $left_name_middle && $right_name_middle) {
+			print $name_list_fh "$left_name_middle\:$right_name_middle\n";
+		}
+
+		if (($left_name_last ne $right_name_last) && $left_name_last && $right_name_last) {
+			print $name_list_fh "$left_name_last\:$right_name_last\n";
+		}
+
+		if (($left_name_maiden ne $right_name_maiden) && $left_name_maiden && $right_name_maiden) {
+			print $name_list_fh "$left_name_maiden\:$right_name_maiden\n";
+		}
 	}
 
-	my $middle_name_matches = 0;
-	if (($left_name_middle && !$right_name_middle) ||
-	    (!$left_name_middle && $right_name_middle) ||
-	    ($left_name_middle eq $right_name_middle) ||
-	    initialVsWholeMatch($left_name_middle, $right_name_middle)) {
-		$middle_name_matches = 1;
-	}
-
+	my $first_name_matches = compareNamesGuts(1, $left_name_first, $right_name_first);
+	my $middle_name_matches = compareNamesGuts(1, $left_name_middle, $right_name_middle);
 	my $last_name_matches = 0;
+
 	if ($gender eq "female") {
-		# Jane Smith (Doe) vs. Jane Doe
-		# If either last name matches either maiden name its a match
-		if (($left_name_maiden eq $right_name_maiden && $left_name_maiden) ||
-		($left_name_maiden eq $right_name_last && $left_name_maiden) ||
-		($left_name_last eq $right_name_last && $left_name_last) ||
-		($left_name_last eq $right_name_maiden && $left_name_last)) {
-			$last_name_matches = 1;
-
-		# If one side doesn't have a last/maiden name but the other does then its a match
-		} elsif ((!$left_name_maiden && !$left_name_last) && ($right_name_maiden || $right_name_last) ||
-			 ($left_name_maiden || $left_name_last) && (!$right_name_maiden && !$right_name_last)) {
-			$last_name_matches = 1;
-		}
-
+		$left_name_maiden = $left_name_last if ($left_name_maiden eq "");
+		$right_name_maiden = $right_name_last if ($right_name_maiden eq "");
+		$last_name_matches = compareNamesGuts(0, $left_name_maiden, $right_name_maiden) ||
+				     compareNamesGuts(0, $left_name_last, $right_name_last);
 	} else {
-		if (($left_name_last && !$right_name_last) ||
-		    (!$left_name_last && $right_name_last) ||
-		    ($left_name_last eq $right_name_last)) {
-			$last_name_matches = 1;
-		}
+		$last_name_matches = compareNamesGuts(0, $left_name_last, $right_name_last);
 	}
 
 	printDebug($DBG_NAMES, "compareNames: left '$left_name ($left_name_maiden)', right '$right_name ($right_name_maiden)', first_match($first_name_matches), middle_match($middle_name_matches), last_match($last_name_matches)\n");
@@ -1172,6 +1238,7 @@ sub traversePendingMergePages($$) {
 		$env{'log_file'}	= "$env{'logdir'}/logfile_" . dateHourMinuteSecond() . "_page_$i.html";
 		$debug_fh		= createWriteFH("logfile", $env{'log_file'}, 0);
 		$debug_fh->autoflush(1);
+		print $debug_fh "<pre>";
 
 		my $loop_start_time = time();
 		my $page_profile_count = 0;
@@ -1222,7 +1289,6 @@ sub traversePendingMergePages($$) {
 }
 
 sub runTestCases() {
-	print "runTestCases called\n";
 	my @name_tests;
 	push @name_tests, "Robert James Robert Smith:robert james smith";
 	push @name_tests, "Robert Robert Smith:robert smith";
@@ -1239,6 +1305,7 @@ sub runTestCases() {
 				$result));
 		$index++;
 	}
+	print "\n";
 	
 	my @date_tests;
 	push @date_tests, "1/1/1900:Jan 1900:1";
@@ -1246,6 +1313,40 @@ sub runTestCases() {
 	push @date_tests, "c. 1901:1900:1";
 	push @date_tests, "c. 1905:1900:0";
 	push @date_tests, "1/1/1900:1901:0";
+
+	# todo: fix this scenario
+	# For 6000000000234140489,6000000000234293794
+	#  http://www.geni.com/merge/compare/6000000000234140489?return=merge_center&to=6000000000234293794
+	# Husband is:
+	#  johannes stalknecht
+	# Wives are:
+	#  anna margaretha stalknecht
+	#  anna margaretha pretorius
+	#
+	# We need to pass the husband's last name when comparing two wives
+
+	my @name_tests;
+	push @name_tests, "female:Jane Smith ():Jane Doe ():0";
+	push @name_tests, "female:Jane Smith (Doe):Jane Doe ():1";
+	push @name_tests, "female:Jane Doe (Smith):Jane Smith (Doe):0";
+	push @name_tests, "male:John Doe (foo):John Doe (bar):1";
+	push @name_tests, "male:John Smith (Doe):John Doe ():0";
+	$index = 1;
+	foreach my $test (@name_tests) {
+		(my $gender, my $left_name, my $right_name, my $expected_result) = split(/:/, $test);
+		my $result = compareNames($gender, $left_name, $right_name);
+		printDebug($DBG_PROGRESS,
+			sprintf("compareNames Test #%d: %s, %s, Left Name '%s', Right Name '%s', Result '%s'\n",
+				$index,
+				($result eq $expected_result) ? "PASSED" : "FAILED",
+				$gender,
+				$left_name,
+				$right_name,
+				$result ? "Names MATCHED" : "NAMES DID NOT MATCH"));
+		$index++;
+	}
+	print "\n";
+
 
 	$index = 1;
 	foreach my $test (@date_tests) {
@@ -1260,6 +1361,40 @@ sub runTestCases() {
 				$result ? "DATES MATCHED" : "DATES DID NOT MATCH"));
 		$index++;
 	}
+	print "\n";
+
+	my @phonetics_tests;
+	push @phonetics_tests, "williams:willliams";
+	push @phonetics_tests, "walters:walton";
+	push @phonetics_tests, "byron:bryon";
+	push @phonetics_tests, "booth:boothe";
+	push @phonetics_tests, "margaret:margery";
+	push @phonetics_tests, "hepsibah:hepzibah";
+	$index = 1;
+	foreach my $test (@phonetics_tests) {
+		(my $left_name, my $right_name) = split(/:/, $test);
+		my $doubleM_result = doubleMetaphoneCompare($left_name, $right_name);
+		printDebug($DBG_PROGRESS,
+			sprintf("Phonetics Test #%d: Left Name '%s', Right Name '%s',  Double Metaphone %s\n",
+				$index,
+				$left_name,
+				$right_name,
+				$doubleM_result ? "MATCHED" : "DID NOT MATCH"));
+		$index++;
+	}
+	print "\n";
+
+	my $read_name_list_fh = createReadFH($env{'name_list_file'});
+	while(<$read_name_list_fh>) {
+		chomp();
+		(my $left_name, my $right_name) = split(/:/, $_);
+		if (doubleMetaphoneCompare($left_name, $right_name)) {
+			printDebug($DBG_PROGRESS,
+				sprintf("Phonetics Test: Left Name '%s', Right Name '%s',  Double Metaphone MATCHED\n",
+					$left_name, $right_name));
+		}
+	}
+	undef $read_name_list_fh;
 }
 
 sub main() {
@@ -1345,6 +1480,7 @@ sub main() {
 
 	print $merge_log_fh "</pre>";
 	undef $merge_log_fh;
+	undef $name_list_fh;
 	print $debug_fh "</pre>";
 	undef $debug_fh;
 }
