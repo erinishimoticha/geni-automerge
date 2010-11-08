@@ -31,6 +31,7 @@ sub init(){
 	$env{'get_limit'}		= 18; # Amos has the limit set to 20 so we'll use 18 to have some breathing room
 	$env{'datadir'} 		= "script_data";
 	$env{'logdir'}			= "logs";
+	$env{'action'}			= "traverse_pending_merges";
 
 	# environment
 	$env{'start_time'}		= time();
@@ -195,6 +196,16 @@ sub todaysDate() {
 
 # This isn't working yet
 sub geniLoginAPI() {
+	if (!$env{'username'}) {
+		print STDERR "\nERROR: username is blank.  You must specify your geni username via '-u username'\n";
+		exit();
+	}
+
+	if (!$env{'password'}) {
+		print STDERR "\nERROR: password is blank.  You must specify your geni password via '-p password'\n";
+		exit();
+	}
+
 	$m->cookie_jar(HTTP::Cookies->new());
 	$m->post("https://www.geni.com/login/in&username=$env{'username'}&password=$env{'password'}");
 }
@@ -203,6 +214,16 @@ sub geniLoginAPI() {
 # Do a secure login into geni
 #
 sub geniLogin() {
+	if (!$env{'username'}) {
+		print STDERR "\nERROR: username is blank.  You must specify your geni username via '-u username'\n";
+		exit();
+	}
+
+	if (!$env{'password'}) {
+		print STDERR "\nERROR: password is blank.  You must specify your geni password via '-p password'\n";
+		exit();
+	}
+
 	$m->cookie_jar(HTTP::Cookies->new());
 	$m->get("https://www.geni.com/login");
 	$m->form_number(2);
@@ -585,17 +606,17 @@ sub cleanupNameGuts($) {
 	# Remove accent marks
 	# $name = unac_string_utf16($name);
 
-	# Combine repeating names like "Robert Robert"
-	my $prev_name_comp = "";
-	my $final_name = "";
-	foreach my $name_comp (split(/ /, $name)) {
-		if ($name_comp ne $prev_name_comp) {
-			$final_name .= " " if $final_name;
-			$final_name .= $name_comp;
+	# Combine repeating words in a name like "Robert Robert" or
+	# "tiberius claudius nero claudius tiberius claudius nero" 
+	my @final_name;
+	my %name_components;
+	foreach my $i(split(/ /, $name)) {
+		if (!(exists $name_components{$i})) {
+			$name_components{$i} = 1;
+			push @final_name, $i;
 		}
-		$prev_name_comp = $name_comp;
 	}
-	return $final_name;
+	return join(" ", @final_name);
 }
 
 #
@@ -1200,6 +1221,46 @@ sub traversePendingMergePages($$) {
 	printDebug($DBG_PROGRESS, "$env{'matches'} matches out of $env{'profiles'} profiles in $range_end pages\n");
 }
 
+sub runTestCases() {
+	print "runTestCases called\n";
+	my @name_tests;
+	push @name_tests, "Robert James Robert Smith:robert james smith";
+	push @name_tests, "Robert Robert Smith:robert smith";
+	push @name_tests, "tiberius claudius nero claudius tiberius claudius nero:tiberius claudius nero";
+	my $index = 1;
+	foreach my $test (@name_tests) {
+		(my $test_name, my $expected_result) = split(/:/, $test);
+		my $result = cleanupName($test_name, "", "", "");
+		printDebug($DBG_PROGRESS,
+			sprintf("cleanupName Test #%d: %s, Test Name '%s', Result '%s'\n",
+				$index,
+				($result eq $expected_result) ? "PASSED" : "FAILED",
+				$test_name,
+				$result));
+		$index++;
+	}
+	
+	my @date_tests;
+	push @date_tests, "1/1/1900:Jan 1900:1";
+	push @date_tests, "1/1/1900:1900:1";
+	push @date_tests, "c. 1901:1900:1";
+	push @date_tests, "c. 1905:1900:0";
+	push @date_tests, "1/1/1900:1901:0";
+
+	$index = 1;
+	foreach my $test (@date_tests) {
+		(my $date1, my $date2, my $expected_result) = split(/:/, $test);
+		my $result = dateMatches($date1, $date2);
+		printDebug($DBG_PROGRESS,
+			sprintf("dateMatches Test #%d: %s, Date1 '%s', Date2 '%s', Result '%s'\n",
+				$index,
+				($result eq $expected_result) ? "PASSED" : "FAILED",
+				$date1,
+				$date2,
+				$result ? "DATES MATCHED" : "DATES DID NOT MATCH"));
+		$index++;
+	}
+}
 
 sub main() {
 	$env{'username'}	= "";
@@ -1226,6 +1287,10 @@ sub main() {
 			$left_id = $ARGV[++$i];
 			$right_id = $ARGV[++$i];
 			$debug{"file_" . $DBG_JSON} = 1;
+			$env{'action'} = "pendingmerge";
+
+		} elsif ($ARGV[$i] eq "-t" || $ARGV[$i] eq "-test") {
+			$env{'action'} = "test";
 
 		} elsif ($ARGV[$i] eq "-rb") {
 			$range_begin = $ARGV[++$i];
@@ -1248,31 +1313,27 @@ sub main() {
 		}
 	}
 
-	if (!$env{'username'}) {
-		print STDERR "\nERROR: username is blank.  You must specify your geni username via '-u username'\n";
-		exit();
-	}
-
-	if (!$env{'password'}) {
-		print STDERR "\nERROR: password is blank.  You must specify your geni password via '-p password'\n";
-		exit();
-	}
-
-	if (($left_id && !$right_id) || (!$left_id && $right_id)) {
-		print STDERR "\nERROR: You must specify two profile IDs, you only specified one\n";
-		exit();
-	}
-
 	print $merge_log_fh "<pre>";
 	print $debug_fh "<pre>";
-	# geniLoginAPI(); # Go ahead and login so the user will know now if they mistyped their password
-	geniLogin(); # Go ahead and login so the user will know now if they mistyped their password
-	if ($left_id && $right_id) {
-		analyzePendingMerge("", "", $left_id, $right_id);
-	} else {
+
+	if ($env{'action'} eq "traverse_pending_merges") {
+		geniLogin(); # Go ahead and login so the user will know now if they mistyped their password
 		traversePendingMergePages($range_begin, $range_end);
+		geniLogout();
+
+	} elsif ($env{'action'} eq "pendingmerge") {
+		if (!$left_id || !$right_id) {
+			print STDERR "\nERROR: You must specify two profile IDs, you only specified one\n";
+			exit();
+		}
+
+		geniLogin(); # Go ahead and login so the user will know now if they mistyped their password
+		analyzePendingMerge("", "", $left_id, $right_id);
+		geniLogout();
+
+	} elsif ($env{'action'} eq "test") {
+		runTestCases();
 	}
-	geniLogout();
 
 	my $end_time = time();
 	my $run_time = $end_time - $env{'start_time'};
