@@ -754,10 +754,10 @@ sub compareNames($$$) {
 	if ($gender eq "female") {
 		# Jane Smith (Doe) vs. Jane Doe
 		# If either last name matches either maiden name its a match
-		if (($left_name_maiden eq $right_name_maiden) ||
-		    ($left_name_maiden eq $right_name_last) ||
-		    ($left_name_last eq $right_name_last) ||
-		    ($left_name_last eq $right_name_maiden)) {
+		if (($left_name_maiden eq $right_name_maiden && $left_name_maiden) ||
+		($left_name_maiden eq $right_name_last && $left_name_maiden) ||
+		($left_name_last eq $right_name_last && $left_name_last) ||
+		($left_name_last eq $right_name_maiden && $left_name_last)) {
 			$last_name_matches = 1;
 
 		# If one side doesn't have a last/maiden name but the other does then its a match
