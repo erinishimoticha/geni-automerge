@@ -110,6 +110,8 @@ sub printHelp() {
 	print STDERR "\nmerge_dr.pl\n\n";
 	print STDERR "-u \"user\@email.com\"\n";
 	print STDERR "-p password\n";
+	print STDERR "-api_get_timeframe X: default is 10 seconds\n";
+	print STDERR "-api_get_limit X: default is 18 seconds\n";
 	print STDERR "-circa X (optional): X defines the number of +/- years for date matching.  5 is the default\n";
 	print STDERR "-rb X (optional): rb is short for -range_begin, X is the starting page\n";
 	print STDERR "-re X (optional): re is short for -range_end, X is the ending page\n";
