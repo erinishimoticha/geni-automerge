@@ -277,7 +277,7 @@ sub jsonSanityCheck($) {
 	}
 
 	# Some profiles are private and we cannot access them
-	return if $json_data =~ /Access denied/i;
+	return 0 if $json_data =~ /Access denied/i;
 
 	# I've only seen this once.  Not sure what the trigger is or if the
 	# sleep will fix it.
@@ -1442,8 +1442,10 @@ sub runTestCases() {
 	push @date_tests, "1/1/1900:Jan 1900:1";
 	push @date_tests, "1/1/1900:1900:1";
 	push @date_tests, "c. 1901:1900:1";
-	push @date_tests, "c. 1905:1900:0";
+	push @date_tests, "c. 1905:1900:1";
+	push @date_tests, "c. 1906:1900:0";
 	push @date_tests, "1/1/1900:1901:0";
+	push @date_tests, "c. 1/15/1785:1787:1";
 
 	# todo: fix this scenario
 	# For 6000000000234140489,6000000000234293794
