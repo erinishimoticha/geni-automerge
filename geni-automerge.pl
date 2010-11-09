@@ -277,7 +277,7 @@ sub jsonSanityCheck($) {
 	}
 
 	# Some profiles are private and we cannot access them
-	return if $json_data =~ /Access denied/i;
+	return 0 if $json_data =~ /Access denied/i;
 
 	# I've only seen this once.  Not sure what the trigger is or if the
 	# sleep will fix it.
@@ -956,7 +956,13 @@ sub compareProfiles($$) {
 	my $fh = createReadFH($filename);
 	my $json_data = <$fh>;
 	my $json = new JSON;
-	my $json_text = $json->allow_nonref->utf8->relaxed->decode($json_data);
+	my $json_text;
+	eval{ $json_text = $json->allow_nonref->utf8->relaxed->decode($json_data); };
+	if ($@) {
+		printDebug($DBG_JSON, "Malformed text in JSON data. Aborting this page."); 
+		unlink $filename;
+		return 0;
+	}
 	undef $fh;
 
 	printDebug($DBG_JSON, sprintf ("Pretty JSON:\n%s", $json->pretty->encode($json_text))); 
@@ -1442,8 +1448,10 @@ sub runTestCases() {
 	push @date_tests, "1/1/1900:Jan 1900:1";
 	push @date_tests, "1/1/1900:1900:1";
 	push @date_tests, "c. 1901:1900:1";
-	push @date_tests, "c. 1905:1900:0";
+	push @date_tests, "c. 1905:1900:1";
+	push @date_tests, "c. 1906:1900:0";
 	push @date_tests, "1/1/1900:1901:0";
+	push @date_tests, "c. 1/15/1785:1787:1";
 
 	# todo: fix this scenario
 	# For 6000000000234140489,6000000000234293794
