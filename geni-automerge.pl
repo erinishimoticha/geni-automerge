@@ -507,9 +507,8 @@ sub dateMatches($$) {
 
 	# If the year is pre 1750 then assume circa.  If you don't do this there are too many dates that
 	# are off by a year or two that never match
-	if ($circa == 0 &&
-		(($date1_year != 0 && $date1_year <= 1750) ||
-		($date2_year != 0 && $date2_year <= 1750))) {
+	if (($date1_year && $date1_year <= 1750) ||
+		($date2_year && $date2_year <= 1750)) {
 		$circa = 1;
 	}
 
