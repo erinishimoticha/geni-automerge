@@ -110,6 +110,8 @@ sub printHelp() {
 	print STDERR "\nmerge_dr.pl\n\n";
 	print STDERR "-u \"user\@email.com\"\n";
 	print STDERR "-p password\n";
+	print STDERR "-api_get_timeframe X: default is 10 seconds\n";
+	print STDERR "-api_get_limit X: default is 18 seconds\n";
 	print STDERR "-circa X (optional): X defines the number of +/- years for date matching.  5 is the default\n";
 	print STDERR "-rb X (optional): rb is short for -range_begin, X is the starting page\n";
 	print STDERR "-re X (optional): re is short for -range_end, X is the ending page\n";
@@ -956,13 +958,7 @@ sub compareProfiles($$) {
 	my $fh = createReadFH($filename);
 	my $json_data = <$fh>;
 	my $json = new JSON;
-	my $json_text;
-	eval{ $json_text = $json->allow_nonref->utf8->relaxed->decode($json_data); };
-	if ($@) {
-		printDebug($DBG_JSON, "Malformed text in JSON data. Aborting this page."); 
-		unlink $filename;
-		return 0;
-	}
+	my $json_text = $json->allow_nonref->relaxed->decode($json_data);
 	undef $fh;
 
 	printDebug($DBG_JSON, sprintf ("Pretty JSON:\n%s", $json->pretty->encode($json_text))); 
@@ -1157,7 +1153,7 @@ sub analyzeTreeConflict($) {
 	my $fh = createReadFH($filename);
 	my $json_data = <$fh>;
 	my $json = new JSON;
-	my $json_text = $json->allow_nonref->utf8->relaxed->decode($json_data);
+	my $json_text = $json->allow_nonref->relaxed->decode($json_data);
 	undef $fh;
 
 	if ($profile_id ne "6000000000252920365") {
@@ -1296,19 +1292,18 @@ sub rangeBeginEnd($$$) {
 		$range_end = $max_page;
 	}
 
+	for (my $i = $range_begin; $i <= $range_end; $i++) {
+		if ($type eq "TREE_CONFLICTS" && -e "$env{'datadir'}/tree_conflicts_$i.html") {
+			$range_begin = $i;
+		} elsif ($type eq "PENDING_MERGES" && -e "$env{'datadir'}/merge_list_$i.json") {
+			$range_begin = $i;
+		}
+	}
+
 	if (!$range_begin) {
 		$range_begin = 1;
-
-		for (my $i = 1; $i <= $range_end; $i++) {
-			if ($type eq "TREE_CONFLICTS" && -e "$env{'datadir'}/tree_conflicts_$i.html") {
-				$range_begin = $i;
-			} elsif ($type eq "PENDING_MERGES" && -e "$env{'datadir'}/merge_list_$i.json") {
-				$range_begin = $i;
-			}
-		}
-
-		printDebug($DBG_PROGRESS, "First Page: $range_begin\n");
 	}
+	printDebug($DBG_PROGRESS, "First Page: $range_begin\n");
 
 	return ($range_begin, $range_end);
 }
@@ -1405,7 +1400,7 @@ sub traversePendingMergePages($$) {
 		my $fh = createReadFH($filename);
 		my $json_data = <$fh>;
 		my $json = new JSON;
-		my $json_text = $json->allow_nonref->utf8->relaxed->decode($json_data);
+		my $json_text = $json->allow_nonref->relaxed->decode($json_data);
 		undef $fh;
 
 		foreach my $json_profile_pair (@{$json_text}) {
