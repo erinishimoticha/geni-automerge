@@ -257,9 +257,7 @@ sub geniLogin() {
 # Logout of geni
 #
 sub geniLogout() {
-	if (!$env{'logged_in'}) {
-		return;
-	} 
+	return if !$env{'logged_in'};
 	printDebug($DBG_NONE, "Logging out of www.geni.com\n");
 	$m->get("http://www.geni.com/logout?ref=ph");
 }
@@ -279,9 +277,7 @@ sub jsonSanityCheck($) {
 	}
 
 	# Some profiles are private and we cannot access them
-	if ($json_data =~ /Access denied/i) {
-		return 0;
-	}
+	return if $json_data =~ /Access denied/i;
 
 	# I've only seen this once.  Not sure what the trigger is or if the
 	# sleep will fix it.
@@ -350,12 +346,7 @@ sub timesInRange($$$) {
 		$delta += (1000000 - $time_B_usec);
 	}
 
-	if ($delta <= ($threshold * 1000000)) {
-		# printf("timesInRange: time_A ($time_A), time_B ($time_B), delta($delta), return 1\n");
-		return 1;
-	}
-
-	# printf("timesInRange: time_A ($time_A), time_B ($time_B), delta($delta), return 0\n");
+	return 1 if $delta <= ($threshold * 1000000);
 	return 0;
 }
 
@@ -368,9 +359,7 @@ sub getPage($$) {
 		return;
 	}
 
-	if (!$env{'logged_in'}) {
-		geniLogin();
-	}
+	geniLogin() if !$env{'logged_in'};
 
 	printDebug($DBG_IO, "getPage(fetch): $url\n");
 
@@ -480,9 +469,7 @@ sub dateMatches($$) {
 
 	if ($date1 eq $date2) {
 		# To reduce debug output, don't print the debug when both are "" 
-		if ($date1 ne "") {
-			printDebug($DBG_MATCH_DATE, "DATES: date1 ($date1), date2($date2) MATCHED\n");
-		}
+		printDebug($DBG_MATCH_DATE, "DATES: date1 ($date1), date2($date2) MATCHED\n") if $date1 ne "";
 		return 1;
 	}
 
@@ -544,7 +531,7 @@ sub dateMatches($$) {
 				return 1;
 			}
 		} elsif ($date1_month == 0 || $date2_month == 0) {
-				printDebug($DBG_MATCH_DATE, "  MATCHED\n");
+			printDebug($DBG_MATCH_DATE, "  MATCHED\n");
 			return 1;
 		}
 	}
@@ -695,25 +682,17 @@ sub doubleMetaphoneCompare($$) {
 	# Double metaphone only looks at the first four syllables so comparing two
 	# names with multiple words could give false positives.  Better to be safe
 	# and just declare them not a match.
-	if ($left_name =~ / / || $right_name =~ / /) {
-		return 0;
-	}
+	return 0 if ($left_name =~ / / || $right_name =~ / /);
 
 	# This should never happen but just to be safe
-	if ($left_name eq "" || $right_name eq "") {
-		return 0;
-	}
+	return 0 if ($left_name eq "" || $right_name eq "");
 
 	# If one of the names is just an initial then bail out
-	if ($left_name =~ /^.$/ || $right_name =~ /^.$/) {
-		return 0;
-	}
+	return 0 if ($left_name =~ /^.$/ || $right_name =~ /^.$/);
 
 	# Non-english names give too many false positives so if the name is full
 	# of funky characters then don't even bother running metaphone.
-	if (oddCharCount($left_name) > 2 || oddCharCount($right_name) > 2) {
-		return 0;
-	}
+	return 0 if (oddCharCount($left_name) > 2 || oddCharCount($right_name) > 2);
 
 	(my $left_code1, my $left_code2) = double_metaphone($left_name);
 	(my $right_code1, my $right_code2) = double_metaphone($right_name);
@@ -729,26 +708,11 @@ sub compareNamesGuts($$$) {
 	my $left_name	= shift;
 	my $right_name	= shift;
 
-	if ($left_name && !$right_name) {
-		return 1;
-	}
-
-	if (!$left_name && $right_name) {
-		return 1;
-	}
-
-	if ($left_name eq $right_name) {
-		return 1;
-	}
-
-	if ($compare_initials && initialVsWholeMatch($left_name, $right_name)) {
-		return 1;
-	}
-
-	if (doubleMetaphoneCompare($left_name, $right_name)) {
-		return 1;
-	}
-
+	return 1 if $left_name && !$right_name;
+	return 1 if !$left_name && $right_name;
+	return 1 if $left_name eq $right_name;
+	return 1 if $compare_initials && initialVsWholeMatch($left_name, $right_name);
+	return 1 if doubleMetaphoneCompare($left_name, $right_name);
 	return 0;
 }
 
@@ -991,9 +955,7 @@ sub avoidDuplicatesPush($$$) {
 	my $name_to_add	= shift;
 
 	foreach my $name (@$names_array) {
-		if (compareNames($gender, $name, $name_to_add)) {
-			return;
-		}
+		return if compareNames($gender, $name, $name_to_add);
 	}
 	push @$names_array, $name_to_add;
 }
@@ -1073,9 +1035,7 @@ sub compareProfiles($$) {
 		my @mothers_array;
 		my @spouses_array;
 		foreach my $i (keys %{$json_profile->{'nodes'}}) {
-			if ($i !~ /union/) {
-				next;
-			}
+			next if $i !~ /union/;
 
 			my $partner_type = "";
 			# The "partners" will be parents
@@ -1089,22 +1049,16 @@ sub compareProfiles($$) {
 
 			# So far spouse and ex_spouse are the only two types I've seen
 			my $union_type = $json_profile->{'nodes'}->{$i}->{'status'};
-			if ($union_type ne "spouse" && $union_type ne "ex_spouse") {
-				next;
-			}
+			next if ($union_type ne "spouse" && $union_type ne "ex_spouse");
 			
 			foreach my $j (keys %{$json_profile->{'nodes'}->{$i}->{'edges'}}) {
 				# The profile that we are analyzing will be listed in the union,
 				# just skip over it
-				if ($j eq "profile-$profile_id") {
-					next;
-				}
+				next if $j eq "profile-$profile_id";
 
 				# We're ignoring children and siblings for now
 				my $rel = $json_profile->{'nodes'}->{$i}->{'edges'}->{$j}->{'rel'};
-				if ($rel ne "partner") {
-					next;
-				}
+				next if $rel ne "partner";
 
 				my $gender = $json_profile->{'nodes'}->{$j}->{'gender'};
 				my $name_first = $json_profile->{'nodes'}->{$j}->{'first_name'};
@@ -1218,9 +1172,7 @@ sub analyzeTreeConflict($) {
 
 	getPage($filename, "http://www.geni.com/api/profiles/immediate_family/$profile_id");
 
-	if (jsonSanityCheck($filename) == 0) {
-		return 0;
-	}
+	return 0 if jsonSanityCheck($filename) == 0;
 
 	my $fh = createReadFH($filename);
 	my $json_data = <$fh>;
@@ -1244,9 +1196,7 @@ sub analyzeTreeConflict($) {
 	my @sisters;
 	my $json_profile = $json_text;
 	foreach my $i (keys %{$json_profile->{'nodes'}}) {
-		if ($i !~ /union/) {
-			next;
-		}
+		next if $i !~ /union/;
 
 		my $partner_type = "";
 		# The "partners" will be parents
@@ -1261,9 +1211,7 @@ sub analyzeTreeConflict($) {
 		foreach my $j (keys %{$json_profile->{'nodes'}->{$i}->{'edges'}}) {
 			# The profile that we are analyzing will be listed in the union,
 			# just skip over it
-			if ($j eq "profile-$profile_id") {
-				next;
-			}
+			next if $j eq "profile-$profile_id";
 
 			my $rel = $json_profile->{'nodes'}->{$i}->{'edges'}->{$j}->{'rel'};
 			my $gender = $json_profile->{'nodes'}->{$j}->{'gender'};
