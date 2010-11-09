@@ -409,6 +409,10 @@ sub monthDayYear($) {
 	my $date_month = 0;
 	my $date_day = 0;
 	my $date_year = 0;
+	my %months = ('0','0','','0','1','jan','2','feb','3','mar',
+		'4','apr','5','may','6','jun','7','jul',
+		'8','aug','9','sep','10','oct',
+		'11','nov','12','dec');
 
 	# 7/1/1700
 	if ($date =~ /(\d+)\/(\d+)\/(\d+)/) {
@@ -420,19 +424,7 @@ sub monthDayYear($) {
 	} elsif ($date =~ /(\w+) (\d+)/) {
 		$date_month = $1;
 		$date_year  = $2;
-			  if ($date_month =~ /jan/i) { $date_month = 1;
-		} elsif ($date_month =~ /feb/i) { $date_month = 2;
-		} elsif ($date_month =~ /mar/i) { $date_month = 3;
-		} elsif ($date_month =~ /apr/i) { $date_month = 4;
-		} elsif ($date_month =~ /may/i) { $date_month = 5;
-		} elsif ($date_month =~ /jun/i) { $date_month = 6;
-		} elsif ($date_month =~ /jul/i) { $date_month = 7;
-		} elsif ($date_month =~ /aug/i) { $date_month = 8;
-		} elsif ($date_month =~ /sep/i) { $date_month = 9;
-		} elsif ($date_month =~ /oct/i) { $date_month = 10;
-		} elsif ($date_month =~ /nov/i) { $date_month = 11;
-		} elsif ($date_month =~ /dec/i) { $date_month = 12;
-		}
+		$date_month = $months{$date_month};
 
 	# 1700
 	} elsif ($date =~ /(\d+)/) {
@@ -441,20 +433,7 @@ sub monthDayYear($) {
 	# July
 	} elsif ($date =~ /(\w+)/) {
 		$date_month = $1;
-			  if ($date_month =~ /jan/i) { $date_month = 1;
-		} elsif ($date_month =~ /feb/i) { $date_month = 2;
-		} elsif ($date_month =~ /mar/i) { $date_month = 3;
-		} elsif ($date_month =~ /apr/i) { $date_month = 4;
-		} elsif ($date_month =~ /may/i) { $date_month = 5;
-		} elsif ($date_month =~ /jun/i) { $date_month = 6;
-		} elsif ($date_month =~ /jul/i) { $date_month = 7;
-		} elsif ($date_month =~ /aug/i) { $date_month = 8;
-		} elsif ($date_month =~ /sep/i) { $date_month = 9;
-		} elsif ($date_month =~ /oct/i) { $date_month = 10;
-		} elsif ($date_month =~ /nov/i) { $date_month = 11;
-		} elsif ($date_month =~ /dec/i) { $date_month = 12;
-		}
-
+		$date_month = $months{$date_month};
 	}
 
 	return ($date_month, $date_day, $date_year);
@@ -521,8 +500,10 @@ sub dateMatches($$) {
 	printDebug($DBG_MATCH_DATE, " circa      : $circa\n\n");
 
 	if (yearInRange($date1_year, $date2_year, $circa)) {
-		if ($date1_month && $date2_month && $date1_month == $date2_month) {
-			if ($date1_day && $date2_day && $date1_day == $date2_day) {
+		if (($date1_month && $date2_month && $date1_month == $date2_month) || 
+			(!$date1_month || !$date2_month)) {
+			if (($date1_day && $date2_day && $date1_day == $date2_day) ||
+				(!$date1_day || !$date2_day)) {
 				printDebug($DBG_MATCH_DATE, "  MATCHED\n");
 				return 1;
 			}
