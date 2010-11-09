@@ -28,7 +28,7 @@ main();
 
 sub init(){
 	# configuration
-	$env{'circa_range'}		= 1;
+	$env{'circa_range'}		= 5;
 	$env{'get_timeframe'}		= 10;
 	$env{'get_limit'}		= 18; # Amos has the limit set to 20 so we'll use 18 to have some breathing room
 	$env{'datadir'} 		= "script_data";
@@ -400,6 +400,7 @@ sub yearInRange($$$) {
 	my $circa = shift;
 
 	return (abs(($year1) - ($year2)) <= $env{'circa_range'} ? $env{'circa_range'} : 0) if $circa;
+	return 1 if $year1 < 1700 && abs(($year1) - ($year2)) <= 5;
 	return ($year1 == $year2); 
 }
 
