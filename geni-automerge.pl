@@ -567,6 +567,16 @@ sub cleanupNameGuts($) {
 		$name = $` . " " . $';
 	}
 
+	# Remove everything in ()s
+	while ($name =~ /\(.*?\)/) {
+		$name = $` . " " . $';
+	}
+
+	# Remove everything in []s
+	while ($name =~ /\[.*?\]/) {
+		$name = $` . " " . $';
+	}
+
 	# Remove punctuation
 	$name =~ s/\./ /g;
 	$name =~ s/\,/ /g;
@@ -1181,7 +1191,6 @@ sub mergeProfiles($$$) {
 			$hour, $min, $sec, mergeURLHTML($id1, $id2));
 	$env{'matches'}++;
 	printDebug($DBG_PROGRESS, "MERGING: $id1 and $id2\n");
-	printDebug($DBG_PROGRESS, "MERGING: $merge_url_api\n");
 	printf $merge_log_fh "$merge_log_entry\n";
 
 	if (!$env{'logged_in'}) {
