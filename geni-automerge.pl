@@ -400,7 +400,6 @@ sub yearInRange($$$) {
 	my $circa = shift;
 
 	return (abs(($year1) - ($year2)) <= $env{'circa_range'} ? $env{'circa_range'} : 0) if $circa;
-	return 1 if $year1 < 1700 && abs(($year1) - ($year2)) <= 5;
 	return ($year1 == $year2); 
 }
 
@@ -523,17 +522,11 @@ sub dateMatches($$) {
 	printDebug($DBG_MATCH_DATE, " circa      : $circa\n\n");
 
 	if (yearInRange($date1_year, $date2_year, $circa)) {
-		if ($date1_month == $date2_month) {
-			if ($date1_day == $date2_day) {
-				printDebug($DBG_MATCH_DATE, "  MATCHED\n");
-				return 1;
-			} elsif ($date1_day == 0 || $date2_day == 0) {
+		if ($date1_month && $date2_month && $date1_month == $date2_month) {
+			if ($date1_day && $date2_day && $date1_day == $date2_day) {
 				printDebug($DBG_MATCH_DATE, "  MATCHED\n");
 				return 1;
 			}
-		} elsif ($date1_month == 0 || $date2_month == 0) {
-			printDebug($DBG_MATCH_DATE, "  MATCHED\n");
-			return 1;
 		}
 	}
 
