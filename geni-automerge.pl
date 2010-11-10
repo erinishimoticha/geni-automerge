@@ -111,7 +111,6 @@ sub init(){
 sub printHelp() {
 	print STDERR "\nmerge_dr.pl\n\n";
 	print STDERR "-u \"user\@email.com\"\n";
-	print STDERR "-p password\n";
 	print STDERR "-api_get_timeframe X: default is 10 seconds\n";
 	print STDERR "-api_get_limit X: default is 18 seconds\n";
 	print STDERR "-circa X (optional): X defines the number of +/- years for date matching.  5 is the default\n";
@@ -1641,6 +1640,25 @@ sub main() {
 		} else { 
 			printDebug($DBG_NONE, "ERROR: '$ARGV[$i]' is not a supported arguement\n");
 			printHelp();
+		}
+	}
+
+	if ($env{'username'} eq "") {
+		print "username: ";
+		$env{'username'} = <STDIN>;
+	}
+
+	if ($env{'password'} eq "") {
+		$env{'username'} =~ /^(.*)\@/;
+		my $password_file = "/tmp/$1\.txt";
+		if (-e $password_file) {
+			my $fh = createReadFH($password_file);
+			$env{'password'} = <$fh>;
+			unlink $password_file;
+			undef $fh;
+		} else {
+			print "password: ";
+			$env{'password'} = <STDIN>;
 		}
 	}
 
