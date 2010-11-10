@@ -37,6 +37,7 @@ sub init(){
 	$env{'logged_in'}		= 0;
 	$env{'matches'} 		= 0;
 	$env{'profiles'}		= 0;
+	$env{'merge_little_trees'}	= 0;
 
 	$debug{"file_" . $DBG_NONE}		= 1;
 	$debug{"file_" . $DBG_PROGRESS}		= 1;
@@ -98,7 +99,7 @@ sub printHelp() {
 	print STDERR "-test: Sanity check the comparison functions\n";
 	print STDERR "-treeconflicts: Analyze your list of Tree Conflicts\n";
 	print STDERR "-treeconflict : Analyze profile X for Tree Conflicts\n";
-	print STDERR "\n";
+	print STDERR "-merge_little_trees: Enables mering a little tree into the big tree\n";
 	print STDERR "-h -help : print this menu\n\n";
 	print STDERR "\n";
 	exit(0);
@@ -964,7 +965,7 @@ sub compareProfiles($$$) {
 	foreach my $json_profile (@{$json_text}) {
 
 		# If the profile isn't on the big tree then don't merge it.
-		if ($json_profile->{'focus'}->{'big_tree'} ne "true") {
+		if (!$env{'merge_little_trees'} && $json_profile->{'focus'}->{'big_tree'} ne "true") {
 			printDebug($DBG_NONE,
 				sprintf("NO_MATCH: %s is not on the big tree\n",
 					($geni_profile == $left_profile) ? $id1_url : $id2_url));
@@ -1578,6 +1579,9 @@ sub main() {
 
 		} elsif ($ARGV[$i] eq "-run_from_cgi") {
 			$run_from_cgi = 1;
+
+		} elsif ($ARGV[$i] eq "-merge_little_trees") {
+			$env{'merge_little_trees'} = 1;
 
 		} elsif ($ARGV[$i] eq "-api_get_timeframe") {
 			$env{'get_timeframe'} = $ARGV[++$i];
