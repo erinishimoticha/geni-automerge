@@ -30,30 +30,14 @@ sub init(){
 	$env{'circa_range'}		= 5;
 	$env{'get_timeframe'}		= 10;
 	$env{'get_limit'}		= 18; # Amos has the limit set to 20 so we'll use 18 to have some breathing room
-	$env{'datadir'} 		= "script_data";
-	$env{'logdir'}			= "logs";
 	$env{'action'}			= "traverse_pending_merges";
 
 	# environment
 	$env{'start_time'}		= time();
 	$env{'logged_in'}		= 0;
-	# todo: Once we are all running this script from the same machine
-	# merge_log_file needs to be the same file for all users.
-	$env{'merge_log_file'}		= "$env{'logdir'}/merge_log.html";
-	$env{'log_file'}		= "$env{'logdir'}/logfile_" . dateHourMinuteSecond() . ".html";
 	$env{'matches'} 		= 0;
 	$env{'profiles'}		= 0;
 
-	# logging
-	(mkdir $env{'datadir'}, 0755) if !(-e $env{'datadir'});
-	(mkdir $env{'logdir'}, 0755) if !(-e $env{'logdir'});
-
-	my $print_pre = !(-e $env{'merge_log_file'});
-	$merge_log_fh = createWriteFH("Merge History", $env{'merge_log_file'}, 1);
-	$merge_log_fh->autoflush(1);
-	print $merge_log_fh "<pre>\n" if $print_pre;
-	$debug_fh				= createWriteFH("logfile", $env{'log_file'}, 0);
-	$debug_fh->autoflush(1);
 	$debug{"file_" . $DBG_NONE}		= 1;
 	$debug{"file_" . $DBG_PROGRESS}		= 1;
 	$debug{"file_" . $DBG_IO}		= 0;
@@ -139,8 +123,8 @@ sub printDebug($$) {
 #
 sub gracefulExit($) {
 	my $msg = shift;
-	printDebug($DBG_NONE, "$env{'matches'} matches out of $env{'profiles'} profiles\n");
-	printDebug($DBG_NONE, $msg);
+	printDebug($DBG_PROGRESS, "$env{'matches'} matches out of $env{'profiles'} profiles\n");
+	printDebug($DBG_PROGRESS, $msg);
 	geniLogout();
 	exit();
 }
@@ -1555,6 +1539,7 @@ sub main() {
 	my $range_end		= 0;
 	my $left_id		= 0;
 	my $right_id		= 0;
+	my $run_from_cgi	= 0;
 
 	#
 	# Parse all command line arguements
@@ -1591,6 +1576,9 @@ sub main() {
 		} elsif ($ARGV[$i] eq "-re") {
 			$range_end = $ARGV[++$i];
 
+		} elsif ($ARGV[$i] eq "-run_from_cgi") {
+			$run_from_cgi = 1;
+
 		} elsif ($ARGV[$i] eq "-api_get_timeframe") {
 			$env{'get_timeframe'} = $ARGV[++$i];
 
@@ -1611,9 +1599,35 @@ sub main() {
 		$env{'username'} = <STDIN>;
 	}
 
+	$env{'username'}	=~ /^(.*)\@/;
+	$env{'username_short'}	= $1;
+	$env{'home_dir'}	= "/home/geni/www";
+	$env{'user_home_dir'}	= "$env{'home_dir'}/$env{'username_short'}";
+	$env{'datadir'} 	= "$env{'user_home_dir'}/script_data";
+	$env{'logdir'}		= "$env{'user_home_dir'}/logs";
+	$env{'merge_log_file'}	= "$env{'home_dir'}/merge_log.html";
+	$env{'log_file'}	= "$env{'logdir'}/logfile_" . dateHourMinuteSecond() . ".html";
+
+	if ($run_from_cgi) {
+		system "rm -rf $env{'datadir'}/*";
+		system "rm -rf $env{'logdir'}/*";
+	}
+
+	(mkdir $env{'home_dir'}, 0755) if !(-e $env{'home_dir'});
+	(mkdir $env{'user_home_dir'}, 0755) if !(-e $env{'user_home_dir'});
+	(mkdir $env{'datadir'}, 0755) if !(-e $env{'datadir'});
+	(mkdir $env{'logdir'}, 0755) if !(-e $env{'logdir'});
+
+	my $print_pre = !(-e $env{'merge_log_file'});
+	$merge_log_fh = createWriteFH("Merge History", $env{'merge_log_file'}, 1);
+	$merge_log_fh->autoflush(1);
+	print $merge_log_fh "<pre>\n" if $print_pre;
+
+	$debug_fh = createWriteFH("logfile", $env{'log_file'}, 0);
+	$debug_fh->autoflush(1);
+
 	if ($env{'password'} eq "") {
-		$env{'username'} =~ /^(.*)\@/;
-		my $password_file = "/tmp/$1\.txt";
+		my $password_file = "/tmp/$env{'username_short'}\.txt";
 		if (-e $password_file) {
 			my $fh = createReadFH($password_file);
 			$env{'password'} = <$fh>;
