@@ -11,7 +11,7 @@ use JSON;
 use Text::DoubleMetaphone qw( double_metaphone );
 
 # globals and constants
-my (%env, %debug, $debug_fh, $merge_log_fh, $m, %blacklist_managers, @get_history, $name_list_fh);
+my (%env, %debug, $debug_fh, $merge_log_fh, $m, %blacklist_managers, @get_history);
 my $m = WWW::Mechanize->new(autocheck => 0);
 my $DBG_NONE			= "DBG_NONE"; # Normal output
 my $DBG_PROGRESS		= "DBG_PROGRESS";
@@ -19,7 +19,6 @@ my $DBG_URLS			= "DBG_URLS";
 my $DBG_IO			= "DBG_IO";
 my $DBG_NAMES			= "DBG_NAMES";
 my $DBG_JSON			= "DBG_JSON";
-my $DBG_PHONETICS		= "DBG_PHONETICS";
 my $DBG_MATCH_DATE		= "DBG_MATCH_DATE";
 my $DBG_MATCH_BASIC		= "DBG_MATCH_BASIC";
 
@@ -41,7 +40,6 @@ sub init(){
 	# todo: Once we are all running this script from the same machine
 	# merge_log_file needs to be the same file for all users.
 	$env{'merge_log_file'}		= "$env{'logdir'}/merge_log.html";
-	$env{'name_list_file'}		= "$env{'logdir'}/name_list.txt";
 	$env{'log_file'}		= "$env{'logdir'}/logfile_" . dateHourMinuteSecond() . ".html";
 	$env{'matches'} 		= 0;
 	$env{'profiles'}		= 0;
@@ -54,8 +52,6 @@ sub init(){
 	$merge_log_fh = createWriteFH("Merge History", $env{'merge_log_file'}, 1);
 	$merge_log_fh->autoflush(1);
 	print $merge_log_fh "<pre>\n" if $print_pre;
-	$name_list_fh				= createWriteFH("Name List", $env{'name_list_file'}, 1);
-	$name_list_fh->autoflush(1);
 	$debug_fh				= createWriteFH("logfile", $env{'log_file'}, 0);
 	$debug_fh->autoflush(1);
 	$debug{"file_" . $DBG_NONE}		= 1;
@@ -64,7 +60,6 @@ sub init(){
 	$debug{"file_" . $DBG_URLS}		= 1;
 	$debug{"file_" . $DBG_NAMES}		= 0;
 	$debug{"file_" . $DBG_JSON}		= 0;
-	$debug{"file_" . $DBG_PHONETICS}	= 0;
 	$debug{"file_" . $DBG_MATCH_BASIC}	= 1;
 	$debug{"file_" . $DBG_MATCH_DATE}	= 1;
 	$debug{"console_" . $DBG_NONE}		= 0;
@@ -73,7 +68,6 @@ sub init(){
 	$debug{"console_" . $DBG_URLS}		= 0;
 	$debug{"console_" . $DBG_NAMES}		= 0;
 	$debug{"console_" . $DBG_JSON}		= 0;
-	$debug{"console_" . $DBG_PHONETICS}	= 0;
 	$debug{"console_" . $DBG_MATCH_BASIC}	= 0;
 	$debug{"console_" . $DBG_MATCH_DATE}	= 0;
 
@@ -775,25 +769,6 @@ sub compareNames($$$$) {
 		$right_name_first = $1;
 		$right_name_middle = $2;
 		$right_name_last= $3;
-	}
-
-	# Store a list of pairs of names that we can use for phonetics testing
-	if ($debug{"file__" . $DBG_PHONETICS} || $debug{"console_" . $DBG_PHONETICS}) {
-		if (($left_name_first ne $right_name_first) && $left_name_first && $right_name_first) {
-			print $name_list_fh "$left_name_first\:$right_name_first\n";
-		}
-
-		if (($left_name_middle ne $right_name_middle) && $left_name_middle && $right_name_middle) {
-			print $name_list_fh "$left_name_middle\:$right_name_middle\n";
-		}
-
-		if (($left_name_last ne $right_name_last) && $left_name_last && $right_name_last) {
-			print $name_list_fh "$left_name_last\:$right_name_last\n";
-		}
-
-		if (($left_name_maiden ne $right_name_maiden) && $left_name_maiden && $right_name_maiden) {
-			print $name_list_fh "$left_name_maiden\:$right_name_maiden\n";
-		}
 	}
 
 	my $first_name_matches = compareNamesGuts(1, $left_name_first, $right_name_first);
@@ -1571,18 +1546,6 @@ sub runTestCases() {
 		$index++;
 	}
 	print "\n";
-
-#	my $read_name_list_fh = createReadFH($env{'name_list_file'});
-#	while(<$read_name_list_fh>) {
-#		chomp();
-#		(my $left_name, my $right_name) = split(/:/, $_);
-#		if (doubleMetaphoneCompare($left_name, $right_name)) {
-#			printDebug($DBG_PROGRESS,
-#				sprintf("Phonetics Test: Left Name '%s', Right Name '%s',  Double Metaphone MATCHED\n",
-#					$left_name, $right_name));
-#		}
-#	}
-#	undef $read_name_list_fh;
 }
 
 sub main() {
@@ -1698,7 +1661,6 @@ sub main() {
 			int($run_time % 60)));
 
 	undef $merge_log_fh;
-	undef $name_list_fh;
 	undef $debug_fh;
 }
 
