@@ -50,8 +50,10 @@ sub init(){
 	(mkdir $env{'datadir'}, 0755) if !(-e $env{'datadir'});
 	(mkdir $env{'logdir'}, 0755) if !(-e $env{'logdir'});
 
-	$merge_log_fh				= createWriteFH("Merge History", $env{'merge_log_file'}, 1);
+	my $print_pre = !(-e $env{'merge_log_file'});
+	$merge_log_fh = createWriteFH("Merge History", $env{'merge_log_file'}, 1);
 	$merge_log_fh->autoflush(1);
+	print $merge_log_fh "<pre>\n" if $print_pre;
 	$name_list_fh				= createWriteFH("Name List", $env{'name_list_file'}, 1);
 	$name_list_fh->autoflush(1);
 	$debug_fh				= createWriteFH("logfile", $env{'log_file'}, 0);
@@ -60,7 +62,7 @@ sub init(){
 	$debug{"file_" . $DBG_PROGRESS}		= 1;
 	$debug{"file_" . $DBG_IO}		= 0;
 	$debug{"file_" . $DBG_URLS}		= 1;
-	$debug{"file_" . $DBG_NAMES}		= 1;
+	$debug{"file_" . $DBG_NAMES}		= 0;
 	$debug{"file_" . $DBG_JSON}		= 0;
 	$debug{"file_" . $DBG_PHONETICS}	= 0;
 	$debug{"file_" . $DBG_MATCH_BASIC}	= 1;
@@ -116,6 +118,10 @@ sub printHelp() {
 	print STDERR "-rb X (optional): rb is short for -range_begin, X is the starting page\n";
 	print STDERR "-re X (optional): re is short for -range_end, X is the ending page\n";
 	print STDERR "-pm X Y: pm is short for -pendingmerge.  X and Y are the two profile IDs to merge\n";
+	print STDERR "-test: Sanity check the comparison functions\n";
+	print STDERR "-treeconflicts: Analyze your list of Tree Conflicts\n";
+	print STDERR "-treeconflict : Analyze profile X for Tree Conflicts\n";
+	print STDERR "\n";
 	print STDERR "-h -help : print this menu\n\n";
 	print STDERR "\n";
 	exit(0);
@@ -314,26 +320,19 @@ sub jsonSanityCheck($) {
 }
 
 #
-# Return TRUE if $time_A and $time_B are within $threshold of each other.
-# $threshold should be in seconds.
-#
-# Always pass the most recent time as time_A. The time strings look like:
+# Always pass the most recent time as time_A.  The time strings look like:
 # EpochSeconds.Microseconds
 # 1288721911.894155
 # 1288721917.83155
 # 1288721923.200155
 # 1288721928.390155
 #
-sub timesInRange($$$) {
+sub timestampDelta($$) {
 	my $time_A = shift;
 	my $time_B = shift;
-	my $threshold = shift;
-
-	gracefulExit("ERROR: Don't call timesInRange with a threshold of 0\n") if !$threshold;
 
 	(my $time_A_sec, my $time_A_usec) = split(/\./, $time_A);
 	(my $time_B_sec, my $time_B_usec) = split(/\./, $time_B);
-
 	my $delta = 0;
 
 	if ($time_A_sec == $time_B_sec) {
@@ -348,8 +347,26 @@ sub timesInRange($$$) {
 		$delta += (1000000 - $time_B_usec);
 	}
 
+	return $delta;
+}
+
+#
+# Return TRUE if $time_A and $time_B are within $threshold of each other.
+# $threshold should be in seconds.  Always pass the most recent time as time_A. 
+#
+sub timesInRange($$$) {
+	my $time_A = shift;
+	my $time_B = shift;
+	my $threshold = shift;
+
+	my $delta = timestampDelta($time_A, $time_B);
 	return 1 if $delta <= ($threshold * 1000000);
 	return 0;
+}
+
+sub roundup($) {
+	my $n = shift;
+	return(($n == int($n)) ? $n : int($n + 1))
 }
 
 sub getPage($$) {
@@ -362,26 +379,29 @@ sub getPage($$) {
 	}
 
 	geniLogin() if !$env{'logged_in'};
-
 	printDebug($DBG_IO, "getPage(fetch): $url\n");
 
 	(my $time_sec, my $time_usec) = Time::HiRes::gettimeofday();
 	my $time_current = "$time_sec.$time_usec";
-
 	my @new_get_history;
-	my $gets_in_last_ten_seconds = 0;
+	my $gets_in_api_timeframe = 0;
 	foreach my $timestamp (@get_history) {
 		chomp($timestamp);
 		if (timesInRange($time_current, $timestamp, $env{'get_timeframe'})) {
-			$gets_in_last_ten_seconds++;
+			$gets_in_api_timeframe++;
 			push @new_get_history, $timestamp;
 		}
 	}
 	@get_history = @new_get_history;
 
-	if ($gets_in_last_ten_seconds >= $env{'get_limit'}) {
-		printDebug($DBG_NONE, "$gets_in_last_ten_seconds gets() in the past $env{'get_timeframe'} seconds....sleeping....\n");
-		sleep(1);
+	if ($gets_in_api_timeframe >= $env{'get_limit'}) {
+		# index is the timestamp entry that needs to expire before we can do another get
+		my $index = $gets_in_api_timeframe - $env{'get_limit'};
+		my $new_to_old_delta = roundup(timestampDelta($time_current, $get_history[$index])/1000000);
+		my $sleep_length = $env{'get_timeframe'} - $new_to_old_delta;
+		printDebug($DBG_NONE,
+			"$gets_in_api_timeframe gets() in the past $env{'get_timeframe'} seconds....sleeping for $sleep_length seconds\n");
+		sleep($sleep_length);
 	}
 
 	my $fh = createWriteFH("", $filename, 0);
@@ -447,19 +467,18 @@ sub monthDayYear($) {
 sub dateMatches($$) {
 	my $date1 = shift;
 	my $date2 = shift;
+	my $debug_string = "date1($date1) vs. date2($date2)\n";
 
 	if ($date1 eq $date2) {
 		# To reduce debug output, don't print the debug when both are "" 
-		printDebug($DBG_MATCH_DATE, "DATES: date1 ($date1), date2($date2) MATCHED\n") if $date1 ne "";
+		printDebug($DBG_MATCH_DATE, "MATCH: $debug_string") if $date1 ne "";
 		return 1;
 	}
-
-	printDebug($DBG_MATCH_DATE, "DATES: date1 ($date1), date2($date2)");
 
 	# If one date is blank and the other is not then we consider one to be more specific than the other
 	if (($date1 ne "" && $date2 eq "") ||
 		 ($date1 eq "" && $date2 ne "")) {
-		printDebug($DBG_MATCH_DATE, "  MATCHED\n");
+		printDebug($DBG_MATCH_DATE, "MATCH: $debug_string");
 		return 1;
 	} 
 
@@ -493,26 +512,26 @@ sub dateMatches($$) {
 		$circa = 1;
 	}
 
-	printDebug($DBG_MATCH_DATE, "\n date1_month: $date1_month\n");
-	printDebug($DBG_MATCH_DATE, " date1_day  : $date1_day\n");
-	printDebug($DBG_MATCH_DATE, " date1_year : $date1_year\n");
-	printDebug($DBG_MATCH_DATE, " date2_month: $date2_month\n");
-	printDebug($DBG_MATCH_DATE, " date2_day  : $date2_day\n");
-	printDebug($DBG_MATCH_DATE, " date2_year : $date2_year\n");
-	printDebug($DBG_MATCH_DATE, " circa      : $circa\n\n");
+#	printDebug($DBG_MATCH_DATE, "\n date1_month: $date1_month\n");
+#	printDebug($DBG_MATCH_DATE, " date1_day  : $date1_day\n");
+#	printDebug($DBG_MATCH_DATE, " date1_year : $date1_year\n");
+#	printDebug($DBG_MATCH_DATE, " date2_month: $date2_month\n");
+#	printDebug($DBG_MATCH_DATE, " date2_day  : $date2_day\n");
+#	printDebug($DBG_MATCH_DATE, " date2_year : $date2_year\n");
+#	printDebug($DBG_MATCH_DATE, " circa      : $circa\n\n");
 
 	if (yearInRange($date1_year, $date2_year, $circa)) {
 		if (($date1_month && $date2_month && $date1_month == $date2_month) || 
 			(!$date1_month || !$date2_month)) {
 			if (($date1_day && $date2_day && $date1_day == $date2_day) ||
 				(!$date1_day || !$date2_day)) {
-				printDebug($DBG_MATCH_DATE, "  MATCHED\n");
+				printDebug($DBG_MATCH_DATE, "MATCH: $debug_string");
 				return 1;
 			}
 		}
 	}
 
-	printDebug($DBG_MATCH_DATE, "  DID NOT MATCH\n");
+	printDebug($DBG_MATCH_DATE, "NO_MATCH: $debug_string");
 	return 0;
 }
 
@@ -610,16 +629,17 @@ sub cleanupName($$$$) {
 	my $maiden	= shift;
 	my $name	= "";
 
-	printDebug($DBG_NAMES, "cleanupName: Initial Name: first '$first', middle '$middle', last '$last', maiden '$maiden'\n");
+	# printDebug($DBG_NAMES, "cleanupName: Initial Name: first '$first', middle '$middle', last '$last', maiden '$maiden'\n");
 	$name = $first if $first;
 	$name .= " $middle" if $middle;
 	$name .= " $last" if $last;
+	printDebug($DBG_NAMES, sprintf("cleanupName  pre-clean: %s%s\n", $name, $maiden ? " ($maiden)" : ""));
 
 	$name = cleanupNameGuts($name);
 	$maiden = cleanupNameGuts($maiden);
 	$name .= " ($maiden)" if $maiden;
 
-	printDebug($DBG_NAMES, "cleanupName: Standardized name '$name'\n\n");
+	printDebug($DBG_NAMES, "cleanupName post-clean: $name\n\n");
 	return $name;
 }
 
@@ -693,14 +713,16 @@ sub compareNamesGuts($$$) {
 }
 
 # Return TRUE if they match
-sub compareNames($$$) {
+sub compareNames($$$$) {
 	my $gender	= shift;
 	my $left_name	= shift;
 	my $right_name	= shift;
+	my $debug	= shift;
 
 	if (($left_name && !$right_name) ||
 	    (!$left_name && $right_name) ||
 	    ($left_name eq $right_name)) {
+		printDebug($DBG_NONE, sprintf("MATCH Whole Name: left '%s' , right '%s'\n", $left_name, $right_name)) if $debug;
 		return 1;
 	}
 
@@ -788,7 +810,15 @@ sub compareNames($$$) {
 		$last_name_matches = compareNamesGuts(0, $left_name_last, $right_name_last);
 	}
 
-	printDebug($DBG_NAMES, "compareNames: left '$left_name ($left_name_maiden)', right '$right_name ($right_name_maiden)', first_match($first_name_matches), middle_match($middle_name_matches), last_match($last_name_matches)\n");
+	printDebug($DBG_NONE, sprintf("%sMATCH First Name: left '%s' , right '%s'\n", ($first_name_matches) ? "" : "NO_", $left_name_first, $right_name_first)) if $debug;
+	printDebug($DBG_NONE, sprintf("%sMATCH Middle Name: left '%s' , right '%s'\n", ($middle_name_matches) ? "" : "NO_", $left_name_middle, $right_name_middle)) if $debug;
+
+	if ($gender eq "female") {
+		printDebug($DBG_NONE, sprintf("%sMATCH Last Name: left '%s (%s)' , right '%s (%s)'\n", ($last_name_matches) ? "" : "NO_", $left_name_last, $left_name_maiden, $right_name_last, $right_name_maiden)) if $debug;
+	} else {
+		printDebug($DBG_NONE, sprintf("%sMATCH Last Name: left '%s' , right '%s'\n", ($last_name_matches) ? "" : "NO_", $left_name_last, $right_name_last)) if $debug;
+	}
+
 	return ($first_name_matches && $middle_name_matches && $last_name_matches);
 }
 
@@ -814,16 +844,15 @@ sub profileBasicsMatch($$) {
 
 	if ($left_profile->gender ne $right_profile->gender) {
 		printDebug($DBG_MATCH_BASIC,
-			sprintf("profileBasicsMatch(gender): %s's '%s' does not equal '%s'\n",
-				$left_name,
+			sprintf("NO_MATCH: gender '%s' ne '%s'\n",
 				$left_profile->gender,
 				$right_profile->gender));
 		return 0;
 	}
 
-	if (!compareNames($left_profile->gender, $left_name, $right_name)) {
+	if (!compareNames($left_profile->gender, $left_name, $right_name, 1)) {
 		printDebug($DBG_MATCH_BASIC,
-			sprintf("profileBasicsMatch(name): '%s' ne '%s'\n",
+			sprintf("NO_MATCH: name '%s' ne '%s'\n",
 				$left_name,
 				$right_name));
 		return 0;
@@ -831,8 +860,7 @@ sub profileBasicsMatch($$) {
 
 	if ($left_profile->living ne $right_profile->living) {
 		printDebug($DBG_MATCH_BASIC,
-			sprintf("profileBasicsMatch(living): %s's '%s' does not equal '%s'\n",
-				$left_name,
+			sprintf("NO_MATCH: living '%s' does not equal '%s'\n",
 				$left_profile->living,
 				$right_profile->living));
 		return 0;
@@ -840,8 +868,7 @@ sub profileBasicsMatch($$) {
 
 	if (!dateMatches($left_profile->death_year, $right_profile->death_year)) {
 		printDebug($DBG_MATCH_BASIC,
-			sprintf("profileBasicsMatch(death_date): %s's death year '%s' does not equal '%s'\n",
-				$left_name,
+			sprintf("NO_MATCH: death year '%s' does not equal '%s'\n",
 				$left_profile->death_year,
 				$right_profile->death_year));
 		return 0;
@@ -849,8 +876,7 @@ sub profileBasicsMatch($$) {
 
 	if (!dateMatches($left_profile->death_date, $right_profile->death_date)) {
 		printDebug($DBG_MATCH_BASIC,
-			sprintf("profileBasicsMatch(death_date): %s's death date '%s' does not equal '%s'\n",
-				$left_name,
+			sprintf("NO_MATCH: death date '%s' does not equal '%s'\n",
 				$left_profile->death_date,
 				$right_profile->death_date));
 		return 0;
@@ -858,8 +884,7 @@ sub profileBasicsMatch($$) {
 
 	if (!dateMatches($left_profile->birth_year, $right_profile->birth_year)) {
 		printDebug($DBG_MATCH_BASIC,
-			sprintf("profileBasicsMatch(birth_year): %s's birth year '%s' does not equal '%s'\n",
-				$left_name,
+			sprintf("NO_MATCH: birth year '%s' does not equal '%s'\n",
 				$left_profile->birth_year,
 				$right_profile->birth_year));
 		return 0;
@@ -867,24 +892,17 @@ sub profileBasicsMatch($$) {
 
 	if (!dateMatches($left_profile->birth_date, $right_profile->birth_date)) {
 		printDebug($DBG_MATCH_BASIC,
-			sprintf("profileBasicsMatch(birth_date): %s's birth date '%s' does not equal '%s'\n",
-				$left_name,
+			sprintf("NO_MATCH: birth date '%s' does not equal '%s'\n",
 				$left_profile->birth_date,
 				$right_profile->birth_date));
 		return 0;
 	}
 
 	printDebug($DBG_MATCH_BASIC,
-		sprintf("profileBasicsMatch(name): %s's basic profile data matches\n",
+		sprintf("MATCH: %s's basic profile data matches\n",
 			$left_name));
-	return 1;
-}
 
-#
-# Determine how many pages of pending merges there are.  There currently
-# isn't a way to do this via the API so we screen scrape it from the html.
-#
-sub getMaxPendingMergesPage() {
+	return 1;
 }
 
 sub comparePartners($$$$) {
@@ -897,17 +915,21 @@ sub comparePartners($$$$) {
 		return 1;
 	}
 
+	# printDebug($DBG_MATCH_BASIC, "$partner_type:\n");
+	# printDebug($DBG_MATCH_BASIC, sprintf("-left  : %s\n", $left_partners));
+	# printDebug($DBG_MATCH_BASIC, sprintf("-right : %s\n", $right_partners));
+
 	if ($left_partners ne $right_partners) { 
 		foreach my $person (split(/:/, $left_partners)) {
 			foreach my $person2 (split(/:/, $right_partners)) {
-				if (compareNames($gender, $person, $person2)) {
+				if (compareNames($gender, $person, $person2, 1)) {
 					printDebug($DBG_MATCH_BASIC, "One of the $partner_type is a match.\n");
 					return 1;
 				}
 			}
 		}
 
-		printDebug($DBG_MATCH_BASIC, "Profile $partner_type DO NOT match.\n");
+		printDebug($DBG_MATCH_BASIC, "NO_MATCH: $partner_type do not match\n");
 
 		printDebug($DBG_MATCH_BASIC, "Left Profile $partner_type:\n");
 		foreach my $person (split(/:/, $left_partners)) {
@@ -927,13 +949,23 @@ sub comparePartners($$$$) {
 
 sub avoidDuplicatesPush($$$) {
 	my $gender	= shift;
-	my $names_array = shift;
-	my $name_to_add	= shift;
+	my $value_array = shift;
+	my $value_to_add= shift;
 
-	foreach my $name (@$names_array) {
-		return if compareNames($gender, $name, $name_to_add);
+	# We're storing profiles in the array
+	if ($value_to_add =~ /^\d+$/) {
+		foreach my $profile_id (@$value_array) {
+			return if ($profile_id eq $value_to_add);
+		}
+
+	# We're storing names in the array
+	} else {
+		foreach my $name (@$value_array) {
+			return if compareNames($gender, $name, $value_to_add, 0);
+		}
 	}
-	push @$names_array, $name_to_add;
+
+	push @$value_array, $value_to_add;
 }
 
 sub mergeURLHTML($$) {
@@ -941,17 +973,22 @@ sub mergeURLHTML($$) {
 	my $id2			= shift;
 	return "<a href=\"http://www.geni.com/merge/compare/$id1?return=merge_center&to=$id2\">http://www.geni.com/merge/compare/$id1?return=merge_center&to=$id2</a>";
 }
-sub compareProfiles($$) {
+sub compareProfiles($$$) {
 	my $id1			= shift;
 	my $id2			= shift;
+	my $delete_file		= shift;
+	my $id1_url = "<a href=\"http://www.geni.com/people/id/$id1\">$id1</a>";
+	my $id2_url = "<a href=\"http://www.geni.com/people/id/$id2\">$id2</a>";
 
 	my $profiles_url = "http://www.geni.com/api/profiles/compare/$id1,$id2";
 	my $filename = sprintf("$env{'datadir'}/%s-%s.json", $id1, $id2);
 	getPage($filename, $profiles_url);
-	printDebug($DBG_NONE, mergeURLHTML($id1, $id2) . "\n");
+	printDebug($DBG_NONE, "\n\nComparing profile $id1_url to profile $id2_url\n");
+	printDebug($DBG_NONE, "Merge URL: " . mergeURLHTML($id1, $id2) . "\n");
 
 	if (jsonSanityCheck($filename) == 0) {
-		unlink $filename;
+		printDebug($DBG_NONE, "NO_MATCH: jsonSanityCheck failed for $id1 vs $id2\n");
+		unlink $filename if $delete_file;
 		return 0;
 	}
 
@@ -969,11 +1006,23 @@ sub compareProfiles($$) {
 	foreach my $json_profile (@{$json_text}) {
 
 		# If the profile isn't on the big tree then don't merge it.
-		# If the profile has a curator note it is probably a profile
-		# subject to bad merges so don't merge it.
-		if ($json_profile->{'focus'}->{'big_tree'} ne "true" ||
-			$json_profile->{'focus'}->{'merge_note'} ne "") {
-			unlink $filename;
+		if ($json_profile->{'focus'}->{'big_tree'} ne "true") {
+			printDebug($DBG_NONE,
+				sprintf("NO_MATCH: %s is not on the big tree\n",
+					($geni_profile == $left_profile) ? $id1_url : $id2_url));
+			unlink $filename if $delete_file;
+			return 0;
+		}
+
+		# If the profile has a curator note asking that the profile not be merged then skip it.
+		if ($json_profile->{'focus'}->{'merge_note'} =~ /merg/i ||
+		    $json_profile->{'focus'}->{'merge_note'} =~ /work in progress/i ||
+		    $json_profile->{'focus'}->{'merge_note'} =~ /WIP/) {
+			printDebug($DBG_NONE,
+				sprintf("NO_MATCH: %s has a curator note '%s'\n",
+					($geni_profile == $left_profile) ? $id1_url : $id2_url,
+					$json_profile->{'focus'}->{'merge_note'}));
+			unlink $filename if $delete_file;
 			return 0;
 		}
 
@@ -989,7 +1038,11 @@ sub compareProfiles($$) {
 		# Do not merge a profile managed by any of the blacklist_managers
 		foreach my $profile_id (@managers) {
 			if ($blacklist_managers{$profile_id}) {
-				unlink $filename;
+				printDebug($DBG_NONE,
+					sprintf("NO_MATCH: %s is managed by blacklist user %s\n",
+						($geni_profile == $left_profile) ? $id1_url : $id2_url,
+						"<a href=\"http://www.geni.com/people/id/$profile_id/\">$profile_id</a>\n"));
+				unlink $filename if $delete_file;
 				return 0;
 			}
 		}
@@ -1061,43 +1114,27 @@ sub compareProfiles($$) {
 		$geni_profile = $right_profile;
 	}
 
-	printDebug($DBG_MATCH_BASIC, "Fathers:\n");
-	printDebug($DBG_MATCH_BASIC, sprintf("-left  : %s\n", $left_profile->fathers));
-	printDebug($DBG_MATCH_BASIC, sprintf("-right : %s\n", $right_profile->fathers));
-
-	printDebug($DBG_MATCH_BASIC, "Mothers:\n");
-	printDebug($DBG_MATCH_BASIC, sprintf("-left  : %s\n", $left_profile->mothers));
-	printDebug($DBG_MATCH_BASIC, sprintf("-right : %s\n", $right_profile->mothers));
-
-	printDebug($DBG_MATCH_BASIC, "Spouses:\n");
-	printDebug($DBG_MATCH_BASIC, sprintf("-left  : %s\n", $left_profile->spouses));
-	printDebug($DBG_MATCH_BASIC, sprintf("-right : %s\n", $right_profile->spouses));
-
 	# It would be nice to keep the files around for caching purposes but the
 	# volume of files gets out of hand (30k+ in 24 hours) pretty quickly.
-	unlink $filename;
+	unlink $filename if $delete_file;
 
 	if (profileBasicsMatch($left_profile, $right_profile) == 0) {
-		unlink $filename;
 		return 0;
 	}
 
 	if (!comparePartners("male", "fathers", $left_profile->fathers, $right_profile->fathers)) {
-		unlink $filename;
 		return 0;
 	}
 
 	if (!comparePartners("female", "mothers", $left_profile->mothers, $right_profile->mothers)) {
-		unlink $filename;
 		return 0;
 	}
 
 	if (!comparePartners("female", "spouses", $left_profile->spouses, $right_profile->spouses)) {
-		unlink $filename;
 		return 0;
 	}
 
-	printDebug($DBG_MATCH_BASIC, "Profile parents/spouses DO match\n");
+	printDebug($DBG_MATCH_BASIC, "MATCH: parents and spouses match\n");
 	return 1;
 }
 
@@ -1109,16 +1146,37 @@ sub updateGetHistory() {
 	push @get_history, "$time_sec.$time_usec\n";
 }
 
-sub mergeProfiles($$$) {
+sub fixMergeLog() {
+	my $fh = createReadFH($env{'merge_log_file'});
+	my $new_fh = createWriteFH("New Merge History", "$env{'logdir'}/new_merge_log.html", 1);
+	while(<$fh>) {
+		chomp();
+		if (/($env{'username'}) : (.*) : .*compare\/(\d+)\?return=merge_center&to=(\d+)\"\>/) {
+			printf $new_fh ("%s :: %s :: PENDING_MERGE :: Merged %s with %s\n",
+					$1, $2,
+					"<a href=\"http://www.geni.com/people/id/$3\">$3</a>",
+					"<a href=\"http://www.geni.com/people/id/$4\">$4</a>");
+		} elsif ($_ ne "") {
+			print $new_fh $_;
+		}	
+	}
+	undef $fh;
+	undef $new_fh;
+}
+
+sub mergeProfiles($$$$) {
 	my $merge_url_api	= shift;
 	my $id1			= shift;
 	my $id2			= shift;
+	my $desc		= shift;
+	my $id1_url = "<a href=\"http://www.geni.com/people/id/$id1\">$id1</a>";
+	my $id2_url = "<a href=\"http://www.geni.com/people/id/$id2\">$id2</a>";
 
 	(my $sec, my $min, my $hour, my $mday, my $mon, my $year, my $wday, my $yday, my $isdst) = localtime(time);
 	my $merge_log_entry =
-		sprintf("%s : %4d-%02d-%02d %02d:%02d:%02d : %s\n",
+		sprintf("%s :: %4d-%02d-%02d %02d:%02d:%02d :: %s :: Merged %s with %s\n",
 			$env{'username'}, $year+1900, $mon+1, $mday,
-			$hour, $min, $sec, mergeURLHTML($id1, $id2));
+			$hour, $min, $sec, $desc, $id1_url, $id2_url);
 	$env{'matches'}++;
 	printDebug($DBG_PROGRESS, "MERGING: $id1 and $id2\n");
 	printf $merge_log_fh "$merge_log_entry\n";
@@ -1134,12 +1192,25 @@ sub compareAllProfiles($$) {
 	my $text		= shift;
 	my $profiles_array_ptr	= shift;
 	my @profiles_array = @$profiles_array_ptr;
+	my $profile_count = 0;
+	my $match_count = 0;
 
 	for (my $i = 0; $i <= $#profiles_array; $i++) {
 		for (my $j = $i + 1; $j <= $#profiles_array; $j++) {
-			print "$text\[$i] $profiles_array[$i] vs $text\[$j] $profiles_array[$j]\n";
+			# dwalton - here now
+			if (compareProfiles($profiles_array[$i], $profiles_array[$j], 0)) {
+				printDebug($DBG_PROGRESS, "   MATCH: ");
+				# mergeProfiles("http://www.geni.com/api/profiles/merge/$id1,$id2", $id1, $id2, "TREE_CONFLICT");
+				$match_count++;
+			} else {
+				printDebug($DBG_PROGRESS, "NO_MATCH: ");
+			}
+			printDebug($DBG_PROGRESS, "Tree Conflict $text\[$i] $profiles_array[$i] vs $text\[$j] $profiles_array[$j]\n");
+			$profile_count++;
 		}
 	}
+
+	return ($profile_count, $match_count);
 }
 sub analyzeTreeConflict($) {
 	my $profile_id = shift;
@@ -1156,11 +1227,6 @@ sub analyzeTreeConflict($) {
 	my $json_text = $json->allow_nonref->relaxed->decode($json_data);
 	undef $fh;
 
-	if ($profile_id ne "6000000000252920365") {
-		return;
-	}
-
-	$debug{"console_" . $DBG_JSON}	= 1;
 	printDebug($DBG_JSON, sprintf ("Pretty JSON:\n%s", $json->pretty->encode($json_text)));
 
 	my @fathers;
@@ -1192,30 +1258,35 @@ sub analyzeTreeConflict($) {
 			my $rel = $json_profile->{'nodes'}->{$i}->{'edges'}->{$j}->{'rel'};
 			my $gender = $json_profile->{'nodes'}->{$j}->{'gender'};
 			my $id = $json_profile->{'nodes'}->{$j}->{'id'};
+			if ($id eq "") {
+				printDebug($DBG_PROGRESS, "ERROR: $i $j is missing from the json\n");
+				next;
+			}
+
 			if ($rel eq "partner") {
 				if ($partner_type eq "parents") {
 					if ($gender eq "male") {
-						push @fathers, $id;
+						avoidDuplicatesPush("", \@fathers, $id);
 					} elsif ($gender eq "female") {
-						push @mothers, $id;
+						avoidDuplicatesPush("", \@mothers, $id);
 					}
 				} elsif ($partner_type eq "spouses") {
-					push @spouses, $id;
+					avoidDuplicatesPush("", \@spouses, $id);
 				}
 
 			} elsif ($rel eq "child") {
 
 				if ($partner_type eq "parents") {
 					if ($gender eq "male") {
-						push @brothers, $id;
+						avoidDuplicatesPush("", \@brothers, $id);
 					} elsif ($gender eq "female") {
-						push @sisters, $id;
+						avoidDuplicatesPush("", \@sisters, $id);
 					}
 				} elsif ($partner_type eq "spouses") {
 					if ($gender eq "male") {
-						push @sons, $id;
+						avoidDuplicatesPush("", \@sons, $id);
 					} elsif ($gender eq "female") {
-						push @daughters, $id;
+						avoidDuplicatesPush("", \@daughters, $id);
 					}
 				}
 			} else {
@@ -1224,23 +1295,24 @@ sub analyzeTreeConflict($) {
 		}
 	}
 
-	# dwalton - here now
-	compareAllProfiles("Father", \@fathers);
-	compareAllProfiles("Mother", \@mothers);
-	compareAllProfiles("Spouse", \@spouses);
-	compareAllProfiles("Sons", \@sons);
-	compareAllProfiles("Daughters", \@daughters);
-	compareAllProfiles("Brothers", \@brothers);
-	compareAllProfiles("Sisters", \@sisters);
-	exit(); # dwalton - remove
+	my $profile_count = 0;
+	my $match_count = 0;
+	(my $a, my $b) = compareAllProfiles("Father", \@fathers); $profile_count += $a; $match_count += $b;
+	(my $a, my $b) = compareAllProfiles("Mother", \@mothers); $profile_count += $a; $match_count += $b;
+	(my $a, my $b) = compareAllProfiles("Spouse", \@spouses); $profile_count += $a; $match_count += $b;
+	(my $a, my $b) = compareAllProfiles("Sons", \@sons); $profile_count += $a; $match_count += $b;
+	(my $a, my $b) = compareAllProfiles("Daughters", \@daughters); $profile_count += $a; $match_count += $b;
+	(my $a, my $b) = compareAllProfiles("Brothers", \@brothers); $profile_count += $a; $match_count += $b;
+	(my $a, my $b) = compareAllProfiles("Sisters", \@sisters); $profile_count += $a; $match_count += $b;
+	printDebug($DBG_PROGRESS, "Matched $match_count/$profile_count\n");
 }
 
 sub analyzePendingMerge($$) {
 	my $id1			= shift;
 	my $id2			= shift;
 
-	if (compareProfiles($id1, $id2)) {
-		mergeProfiles("http://www.geni.com/api/profiles/merge/$id1,$id2", $id1, $id2);
+	if (compareProfiles($id1, $id2, 1)) {
+		mergeProfiles("http://www.geni.com/api/profiles/merge/$id1,$id2", $id1, $id2, "PENDING_MERGE");
 	}
 }
 
@@ -1469,7 +1541,7 @@ sub runTestCases() {
 	$index = 1;
 	foreach my $test (@name_tests) {
 		(my $gender, my $left_name, my $right_name, my $expected_result) = split(/:/, $test);
-		my $result = compareNames($gender, $left_name, $right_name);
+		my $result = compareNames($gender, $left_name, $right_name, 1);
 		printDebug($DBG_PROGRESS,
 			sprintf("compareNames Test #%d: %s, %s, Left Name '%s', Right Name '%s', Result '%s'\n",
 				$index,
@@ -1590,8 +1662,7 @@ sub main() {
 		}
 	}
 
-	print $merge_log_fh "<pre>";
-	print $debug_fh "<pre>";
+	fixMergeLog();
 
 	if ($env{'action'} eq "traverse_pending_merges") {
 		traversePendingMergePages($range_begin, $range_end);
@@ -1607,7 +1678,7 @@ sub main() {
 	} elsif ($env{'action'} eq "traverse_tree_conflicts") {
 		traverseTreeConflicts($range_begin, $range_end);
 
-	} elsif ($env{'action'} eq "traverseconflict") {
+	} elsif ($env{'action'} eq "treeconflict") {
 		if (!$left_id || $left_id !~ /^\d+$/) {
 			print STDERR "\nERROR: You must specify a profile ID, you entered '$left_id'\n";
 			exit();
@@ -1628,21 +1699,23 @@ sub main() {
 			int(($run_time % 3600) / 60),
 			int($run_time % 60)));
 
-	print $merge_log_fh "</pre>";
 	undef $merge_log_fh;
 	undef $name_list_fh;
-	print $debug_fh "</pre>";
 	undef $debug_fh;
 }
 
 __END__
 46,805,758 big tree profiles on 10/29/2010
 
-DONE
-- better debugs
-- File IO module
-- functions from work script
-- measure how many req we did in the last 10 seconds
-
 TODO
 - write wiki
+- 6000000007224268070 vs 6000000003243493709 has a profile with the birthdate as part of the name
+  We could fix this.
+	-cleanupName  pre-clean: Samuel Seabury b. 10 Dec 1640
+	-cleanupName post-clean: samuel seabury b dec 1640
+
+New API calls on the way:
+/api/profiles/tree_conflicts
+/api/profiles/data_conflicts
+/api/profiles/tree_matches
+
