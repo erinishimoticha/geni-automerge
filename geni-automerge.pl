@@ -1146,24 +1146,6 @@ sub updateGetHistory() {
 	push @get_history, "$time_sec.$time_usec\n";
 }
 
-sub fixMergeLog() {
-	my $fh = createReadFH($env{'merge_log_file'});
-	my $new_fh = createWriteFH("New Merge History", "$env{'logdir'}/new_merge_log.html", 1);
-	while(<$fh>) {
-		chomp();
-		if (/($env{'username'}) : (.*) : .*compare\/(\d+)\?return=merge_center&to=(\d+)\"\>/) {
-			printf $new_fh ("%s :: %s :: PENDING_MERGE :: Merged %s with %s\n",
-					$1, $2,
-					"<a href=\"http://www.geni.com/people/id/$3\">$3</a>",
-					"<a href=\"http://www.geni.com/people/id/$4\">$4</a>");
-		} elsif ($_ ne "") {
-			print $new_fh $_;
-		}	
-	}
-	undef $fh;
-	undef $new_fh;
-}
-
 sub mergeProfiles($$$$) {
 	my $merge_url_api	= shift;
 	my $id1			= shift;
@@ -1174,9 +1156,9 @@ sub mergeProfiles($$$$) {
 
 	(my $sec, my $min, my $hour, my $mday, my $mon, my $year, my $wday, my $yday, my $isdst) = localtime(time);
 	my $merge_log_entry =
-		sprintf("%s :: %4d-%02d-%02d %02d:%02d:%02d :: %s :: Merged %s with %s\n",
-			$env{'username'}, $year+1900, $mon+1, $mday,
-			$hour, $min, $sec, $desc, $id1_url, $id2_url);
+		sprintf("%4d-%02d-%02d %02d:%02d:%02d :: %s :: %s :: Merged %s with %s\n",
+ 			$year+1900, $mon+1, $mday, $hour, $min, $sec,
+			$env{'username'}, $desc, $id1_url, $id2_url);
 	$env{'matches'}++;
 	printDebug($DBG_PROGRESS, "MERGING: $id1 and $id2\n");
 	printf $merge_log_fh "$merge_log_entry\n";
@@ -1661,8 +1643,6 @@ sub main() {
 			printHelp();
 		}
 	}
-
-	fixMergeLog();
 
 	if ($env{'action'} eq "traverse_pending_merges") {
 		traversePendingMergePages($range_begin, $range_end);
