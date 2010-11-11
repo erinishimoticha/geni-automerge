@@ -1606,19 +1606,22 @@ sub main() {
 	$env{'username'}	=~ /^(.*)\@/;
 	$env{'username_short'}	= $1;
 	$env{'home_dir'}	= "/home/geni/www";
-	$env{'user_home_dir'}	= "$env{'home_dir'}/$env{'username_short'}";
-	$env{'datadir'} 	= "$env{'user_home_dir'}/script_data";
-	$env{'logdir'}		= "$env{'user_home_dir'}/logs";
-	$env{'merge_log_file'}	= "$env{'home_dir'}/merge_log.html";
+	$env{'datadir'} 	= "script_data";
+	$env{'logdir'}		= "logs";
+	$env{'merge_log_file'}	= "$env{'logdir'}/merge_log.html";
 	$env{'log_file'}	= "$env{'logdir'}/logfile_" . dateHourMinuteSecond() . ".html";
 
 	if ($run_from_cgi) {
+		$env{'user_home_dir'}	= "$env{'home_dir'}/$env{'username_short'}";
+		$env{'datadir'} 	= "$env{'user_home_dir'}/script_data";
+		$env{'logdir'}		= "$env{'user_home_dir'}/logs";
+		$env{'merge_log_file'}	= "$env{'home_dir'}/merge_log.html";
 		system "rm -rf $env{'datadir'}/*";
 		system "rm -rf $env{'logdir'}/*";
 	}
 
 	(mkdir $env{'home_dir'}, 0755) if !(-e $env{'home_dir'});
-	(mkdir $env{'user_home_dir'}, 0755) if !(-e $env{'user_home_dir'});
+	(mkdir $env{'user_home_dir'}, 0755) if !($env{'user_home_dir'} && -e $env{'user_home_dir'});
 	(mkdir $env{'datadir'}, 0755) if !(-e $env{'datadir'});
 	(mkdir $env{'logdir'}, 0755) if !(-e $env{'logdir'});
 
