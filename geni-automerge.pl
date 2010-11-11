@@ -1273,7 +1273,7 @@ sub traverseTreeConflicts($$) {
 
 	($range_begin, $range_end) = rangeBeginEnd($range_begin, $range_end, "TREE_CONFLICTS");
 
-	for (my $i = $range_begin; $i <= $range_end; $i++) {
+	for (my $i = $range_end; $i >= $range_begin; $i--) {
 		createDebugFH($i);
 	#$env{'log_file'}	= "$env{'logdir'}/logfile_" . dateHourMinuteSecond() . "_page_$page_num\.html";
 
