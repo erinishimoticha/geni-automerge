@@ -38,6 +38,7 @@ sub init(){
 	$env{'matches'} 		= 0;
 	$env{'profiles'}		= 0;
 	$env{'merge_little_trees'}	= 0;
+	$env{'all_of_geni'}		= 0;
 
 	$debug{"file_" . $DBG_NONE}		= 1;
 	$debug{"file_" . $DBG_PROGRESS}		= 1;
@@ -273,17 +274,17 @@ sub jsonSanityCheck($) {
 	}
 
 	if ($json_data =~ /DOCTYPE HTML PUBLIC/) {
-		printDebug($DBG_NONE, "ERROR: 'DOCTYPE HTML PUBLIC' for '$filename'\n");
+		printDebug($DBG_PROGRESS, "ERROR: 'DOCTYPE HTML PUBLIC' for '$filename'\n");
 		return 0;
 	}
 
 	if ($json_data =~/tatus read failed/) {
-		printDebug($DBG_NONE, "ERROR: 'Status read failed' for '$filename'\n");
+		printDebug($DBG_PROGRESS, "ERROR: 'Status read failed' for '$filename'\n");
 		return 0;
 	}
 
 	if ($json_data =~/an't connect to www/) {
-		printDebug($DBG_NONE, "ERROR: 'Can't connect to www' for '$filename'\n");
+		printDebug($DBG_PROGRESS, "ERROR: 'Can't connect to www' for '$filename'\n");
 		return 0;
 	}
 
@@ -939,30 +940,17 @@ sub compareProfiles($$$) {
 	my $id1_url = "<a href=\"http://www.geni.com/people/id/$id1\">$id1</a>";
 	my $id2_url = "<a href=\"http://www.geni.com/people/id/$id2\">$id2</a>";
 
-	my $profiles_url = "http://www.geni.com/api/profiles/compare/$id1,$id2";
+	my $profiles_url = "https://www.geni.com/api/profiles/compare/$id1,$id2";
 	my $filename = sprintf("$env{'datadir'}/%s-%s.json", $id1, $id2);
-	getPage($filename, $profiles_url);
+	my $json_text = getJSON($filename, $profiles_url);
+	return 0 if (!$json_text);
 	printDebug($DBG_NONE, "\n\nComparing profile $id1_url to profile $id2_url\n");
 	printDebug($DBG_NONE, "Merge URL: " . mergeURLHTML($id1, $id2) . "\n");
-
-	if (jsonSanityCheck($filename) == 0) {
-		printDebug($DBG_NONE, "NO_MATCH: jsonSanityCheck failed for $id1 vs $id2\n");
-		unlink $filename if $delete_file;
-		return 0;
-	}
-
-	my $fh = createReadFH($filename);
-	my $json_data = <$fh>;
-	my $json = new JSON;
-	my $json_text = $json->allow_nonref->relaxed->decode($json_data);
-	undef $fh;
-
-	printDebug($DBG_JSON, sprintf ("Pretty JSON:\n%s", $json->pretty->encode($json_text))); 
 
 	my $left_profile = new profile;
 	my $right_profile= new profile;
 	my $geni_profile = $left_profile;
-	foreach my $json_profile (@{$json_text}) {
+	foreach my $json_profile (@{$json_text->{'results'}}) {
 
 		# If the profile isn't on the big tree then don't merge it.
 		if (!$env{'merge_little_trees'} && $json_profile->{'focus'}->{'big_tree'} ne "true") {
@@ -1141,7 +1129,7 @@ sub compareAllProfiles($$) {
 			# dwalton - here now
 			if (compareProfiles($profiles_array[$i], $profiles_array[$j], 0)) {
 				printDebug($DBG_PROGRESS, "   MATCH: ");
-				# mergeProfiles("http://www.geni.com/api/profiles/merge/$id1,$id2", $id1, $id2, "TREE_CONFLICT");
+				# mergeProfiles("https://www.geni.com/api/profiles/merge/$id1,$id2", $id1, $id2, "TREE_CONFLICT");
 				$match_count++;
 			} else {
 				printDebug($DBG_PROGRESS, "NO_MATCH: ");
@@ -1158,17 +1146,8 @@ sub analyzeTreeConflict($) {
 	my $filename = "$env{'datadir'}/$profile_id\.json";
 	print "analyzeTreeConflict called for $profile_id\n";
 
-	getPage($filename, "http://www.geni.com/api/profiles/immediate_family/$profile_id");
-
-	return 0 if jsonSanityCheck($filename) == 0;
-
-	my $fh = createReadFH($filename);
-	my $json_data = <$fh>;
-	my $json = new JSON;
-	my $json_text = $json->allow_nonref->relaxed->decode($json_data);
-	undef $fh;
-
-	printDebug($DBG_JSON, sprintf ("Pretty JSON:\n%s", $json->pretty->encode($json_text)));
+	my $json_text = getJSON($filename, "https://www.geni.com/api/profiles/immediate_family/$profile_id");
+	return 0 if (!$json_text);
 
 	my @fathers;
 	my @mothers;
@@ -1253,7 +1232,7 @@ sub analyzePendingMerge($$) {
 	my $id2			= shift;
 
 	if (compareProfiles($id1, $id2, 1)) {
-		mergeProfiles("http://www.geni.com/api/profiles/merge/$id1,$id2", $id1, $id2, "PENDING_MERGE");
+		mergeProfiles("https://www.geni.com/api/profiles/merge/$id1,$id2", $id1, $id2, "PENDING_MERGE");
 	}
 }
 
@@ -1263,50 +1242,26 @@ sub rangeBeginEnd($$$) {
 	my $range_end   = shift;
 	my $type	= shift;
 
-	my $filename = "";
-	my $max_page = 1;
+	my $filename = sprintf("%s/%s_count.json",
+				$env{'datadir'},
+				$type eq "TREE_CONFLICTS" ? "tree_conflicts" : "merges");
+	my $url = sprintf("https://www.geni.com/api/profiles/%s?collaborators=true&count=true%s",
+			$type eq "TREE_CONFLICTS" ? "treeconflicts" : "merges",
+			$env{'all_of_geni'} ? "&all=true" : "");
 
-	if ($type eq "TREE_CONFLICTS") {
-		printDebug($DBG_PROGRESS, "Determining the number of pages of tree conflicts...\n");
-		$filename = "$env{'datadir'}/tree_conflicts_1.html";
-		getPage($filename, "http://www.geni.com/list/merge_issues?issue_type=&page=1&order=merge_issue_date_modified&order_type=asc&group=&include_collaborators=true");
-	} elsif ($type eq "PENDING_MERGES") {
-		printDebug($DBG_PROGRESS, "Determining the number of pages of pending merges...\n");
-		$filename = "$env{'datadir'}/merge_issues_1.html";
-		getPage($filename, "http://www.geni.com/list/requested_merges?order=last_modified_at&direction=desc&include_collaborators=true&page=1");
-	}
-
-	# Figure out how many pages there are
-	my $fh = createReadFH($filename);
-	while(<$fh>) {
-		if (($type eq "TREE_CONFLICTS" && /goToPage\('(\d+)'\)/) ||
-		    ($type eq "PENDING_MERGES" && /\/list\/requested_merges\?page=(\d+)/)) {
-			if ($1 > $max_page) {
-				$max_page = $1;
-			}
-		}
-	}
-	undef $fh;
-
-	if ($type eq "TREE_CONFLICTS") {
-		printDebug($DBG_PROGRESS,
-			sprintf("There are %d tree conflicts spread over %d pages\n",
-				$max_page * 20, $max_page));
-	} elsif ($type eq "PENDING_MERGES") {
-		# The web page displays 20 per page, the json displays 50 so adjust max_page
-		$max_page = int(($max_page * 20)/50);
-
-		printDebug($DBG_PROGRESS,
-			sprintf("There are %d pending merges spread over %d pages\n",
-				$max_page * 50, $max_page));
-	}
+	my $json_page = getJSON($filename, $url);
+	my $conflict_count = $json_page->{'count'};
+	my $max_page = roundup($conflict_count/50);
+	printDebug($DBG_PROGRESS,
+		sprintf("There are %d %s spread over %d pages\n",
+			$conflict_count, $type, $max_page));
 
 	if ($range_end > $max_page || !$range_end) {
 		$range_end = $max_page;
 	}
 
 	for (my $i = $range_begin; $i <= $range_end; $i++) {
-		if ($type eq "TREE_CONFLICTS" && -e "$env{'datadir'}/tree_conflicts_$i.html") {
+		if ($type eq "TREE_CONFLICTS" && -e "$env{'datadir'}/tree_conflicts_$i.json") {
 			$range_begin = $i;
 		} elsif ($type eq "PENDING_MERGES" && -e "$env{'datadir'}/merge_list_$i.json") {
 			$range_begin = $i;
@@ -1385,6 +1340,24 @@ sub traverseTreeConflicts($$) {
 	printDebug($DBG_PROGRESS, "$env{'matches'} matches out of $env{'profiles'} profiles from page $range_begin to $range_end\n");
 }
 
+sub getJSON ($$) {
+	my $filename = shift;
+	my $url = shift;
+
+	getPage($filename, $url);
+	if (jsonSanityCheck($filename) == 0) {
+		unlink $filename;
+		next;
+	}
+	my $fh = createReadFH($filename);
+	my $json_data = <$fh>;
+	my $json = new JSON;
+	my $json_structure = $json->allow_nonref->relaxed->decode($json_data);
+	undef $fh;
+
+	printDebug($DBG_JSON, sprintf ("Pretty JSON:\n%s", $json->pretty->encode($json_structure))); 
+	return $json_structure;
+}
 #
 # Loop through every page of pending merges and analyze all
 # merges listed on each page. This can take days....
@@ -1395,42 +1368,43 @@ sub traversePendingMergePages($$) {
 
 	($range_begin, $range_end) = rangeBeginEnd($range_begin, $range_end, "PENDING_MERGES");
 
-	for (my $i = $range_begin; $i <= $range_end; $i++) {
-		createDebugFH($i);
+	my $filename = "$env{'datadir'}/merge_list_$range_begin\.json";
+	my $next_page = "https://www.geni.com/api/profiles/merges?collaborators=true&order=last_modified_at&direction=asc&page=$range_begin";
+	my $json_page = getJSON($filename, $next_page);
+	return 0 if (!$json_page);
+
+	while ($next_page ne "") {
+		$next_page =~ /page=(\d+)/;
+		my $page = $1;
+		createDebugFH($page);
 
 		my $loop_start_time = time();
 		my $page_profile_count = 0;
-		my $filename = "$env{'datadir'}/merge_list_$i.json";
-		printDebug($DBG_PROGRESS, "Downloading pending merges list for page $i...\n");
-		getPage($filename, "http://www.geni.com/api/profiles/merges?collaborators=true&order=last_modified_at&direction=asc&page=$i");
-
-		if (jsonSanityCheck($filename) == 0) {
-			# Since the file was hosed, delete it
-			unlink $filename;
-			next;
+		my $filename = "$env{'datadir'}/merge_list_$page.json";
+		my $json_page = getJSON($filename, $next_page);
+		if (!$json_page) {
+			printRunTime($page, $loop_start_time);
+			last;
 		}
 
-		my $fh = createReadFH($filename);
-		my $json_data = <$fh>;
-		my $json = new JSON;
-		my $json_text = $json->allow_nonref->relaxed->decode($json_data);
-		undef $fh;
+		$page = $json_page->{'page'};
+		$next_page = $json_page->{'next_page'};
 
-		foreach my $json_profile_pair (@{$json_text}) {
+		foreach my $result (@{$json_page->{'results'}}) {
 			$env{'profiles'}++;
 			$page_profile_count++;
-			printDebug($DBG_PROGRESS, "Page $i/$range_end Profile $page_profile_count: Overall Profile $env{'profiles'}\n");
+			printDebug($DBG_PROGRESS, "Page $page Profile $page_profile_count: Overall Profile $env{'profiles'}\n");
 
-			if ($json_profile_pair->{'profiles'} =~ /\/(\d+),(\d+)$/) {
+			if ($result->{'profiles'} =~ /\/(\d+),(\d+)$/) {
 				analyzePendingMerge($1, $2);
 			}
 			printDebug($DBG_NONE, "\n");
-		} # End of json_profile_pair for loop
+		}
+		printRunTime($page, $loop_start_time);
+		last if ($page >= $range_end);
+	}
 
-		printRunTime($i, $loop_start_time);
-	} # End of range_begin/range_end for loop
-
-	printDebug($DBG_PROGRESS, "$env{'matches'} matches out of $env{'profiles'} profiles from page $range_begin to $range_end\n");
+	printDebug($DBG_PROGRESS, "$env{'matches'} matches out of $env{'profiles'} profiles\n");
 }
 
 sub runTestCases() {
@@ -1583,6 +1557,9 @@ sub main() {
 		} elsif ($ARGV[$i] eq "-merge_little_trees") {
 			$env{'merge_little_trees'} = 1;
 
+		} elsif ($ARGV[$i] eq "-all_of_geni") {
+			$env{'all_of_geni'} = 1;
+
 		} elsif ($ARGV[$i] eq "-api_get_timeframe") {
 			$env{'get_timeframe'} = $ARGV[++$i];
 
@@ -1605,23 +1582,23 @@ sub main() {
 
 	$env{'username'}	=~ /^(.*)\@/;
 	$env{'username_short'}	= $1;
-	$env{'home_dir'}	= "/home/geni/www";
 	$env{'datadir'} 	= "script_data";
 	$env{'logdir'}		= "logs";
-	$env{'merge_log_file'}	= "$env{'logdir'}/merge_log.html";
+	$env{'merge_log_file'}	= "merge_log.html";
 	$env{'log_file'}	= "$env{'logdir'}/logfile_" . dateHourMinuteSecond() . ".html";
 
 	if ($run_from_cgi) {
+		$env{'home_dir'}	= "/home/geni/www";
 		$env{'user_home_dir'}	= "$env{'home_dir'}/$env{'username_short'}";
 		$env{'datadir'} 	= "$env{'user_home_dir'}/script_data";
 		$env{'logdir'}		= "$env{'user_home_dir'}/logs";
 		$env{'merge_log_file'}	= "$env{'home_dir'}/merge_log.html";
 		system "rm -rf $env{'datadir'}/*";
 		system "rm -rf $env{'logdir'}/*";
+		(mkdir $env{'home_dir'}, 0755) if !(-e $env{'home_dir'});
+		(mkdir $env{'user_home_dir'}, 0755) if !($env{'user_home_dir'} && -e $env{'user_home_dir'});
 	}
 
-	(mkdir $env{'home_dir'}, 0755) if !(-e $env{'home_dir'});
-	(mkdir $env{'user_home_dir'}, 0755) if !($env{'user_home_dir'} && -e $env{'user_home_dir'});
 	(mkdir $env{'datadir'}, 0755) if !(-e $env{'datadir'});
 	(mkdir $env{'logdir'}, 0755) if !(-e $env{'logdir'});
 
