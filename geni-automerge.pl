@@ -514,6 +514,7 @@ sub cleanupNameGuts($) {
 	}
 
 	# Remove punctuation
+	$name =~ s/ d\'/ /g;
 	$name =~ s/\./ /g;
 	$name =~ s/\,/ /g;
 	$name =~ s/\'/ /g;
@@ -1357,19 +1358,13 @@ sub traversePendingMergePages($$) {
 		my $page_profile_count = 0;
 		my $filename = "$env{'datadir'}/merge_list_$page.json";
 		my $json_page = getJSON($filename, $url);
-
-		if (!$json_page) {
-			printRunTime($page, $loop_start_time);
-			$url = $next_url;
-		}
-
-		$page = $json_page->{'page'};
-		$url = $json_page->{'next_page'};
+		$url = $next_url;
+		next if (!$json_page);
 
 		foreach my $result (@{$json_page->{'results'}}) {
 			$env{'profiles'}++;
 			$page_profile_count++;
-			printDebug($DBG_PROGRESS, "Page $page Profile $page_profile_count: Overall Profile $env{'profiles'}\n");
+			printDebug($DBG_PROGRESS, "Page $page/$range_end: Profile $page_profile_count: Overall Profile $env{'profiles'}\n");
 
 			if ($result->{'profiles'} =~ /\/(\d+),(\d+)$/) {
 				analyzePendingMerge($1, $2);
@@ -1377,7 +1372,6 @@ sub traversePendingMergePages($$) {
 			printDebug($DBG_NONE, "\n");
 		}
 		printRunTime($page, $loop_start_time);
-		$url = $next_url;
 	}
 
 	printDebug($DBG_PROGRESS, "$env{'matches'} matches out of $env{'profiles'} profiles\n");
