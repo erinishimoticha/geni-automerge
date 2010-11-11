@@ -1579,10 +1579,9 @@ sub main() {
 
 	if ($env{'password'} eq "") {
 		if ($run_from_cgi) {
-			my $password_file = "/tmp/$env{'username_short'}\.txt";
-			open (INF,$password_file);
+			my $password_file = "/home/geni/www/cgi-bin/geni-automerge/passwords/$env{'username'}\.txt";
+			open (INF,$password_file) or die("can't open /home/geni/www/cgi-bin/geni-automerge/passwords/$env{'username'}\.txt");
 			$env{'password'} = <INF>;
-			unlink $password_file;
 			close INF;
 		} else {
 			print "password: ";
