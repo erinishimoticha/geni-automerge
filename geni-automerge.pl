@@ -1542,6 +1542,9 @@ sub main() {
 		} elsif ($ARGV[$i] eq "-api_get_limit") {
 			$env{'get_limit'} = $ARGV[++$i];
 
+		} elsif ($ARGV[$i] eq "-x") {
+			$env{'delete'} = 1;
+
 		} elsif ($ARGV[$i] eq "-h" || $ARGV[$i] eq "-help") {
 			printHelp();
 
@@ -1573,6 +1576,8 @@ sub main() {
 		system "rm -rf $env{'logdir'}/*";
 		(mkdir $env{'home_dir'}, 0755) if !(-e $env{'home_dir'});
 		(mkdir $env{'user_home_dir'}, 0755) if !($env{'user_home_dir'} && -e $env{'user_home_dir'});
+	}elsif($env{'delete'}){
+		system "rm -rf $env{'datadir'}/*";
 	}
 
 	(mkdir $env{'datadir'}, 0755) if !(-e $env{'datadir'});
