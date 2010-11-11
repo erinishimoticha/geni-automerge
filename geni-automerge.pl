@@ -220,7 +220,7 @@ sub geniLogin() {
 
 	$m->cookie_jar(HTTP::Cookies->new());
 	$m->get("https://www.geni.com/login");
-	$m->form_number(2);
+	$m->form_number(3);
 	$m->field("profile[username]" => $env{'username'});
 	$m->field("profile[password]" => $env{'password'});
 	$m->click();
@@ -231,12 +231,12 @@ sub geniLogin() {
 	undef $login_fh;
 
 	if ($output =~ /Welcome to Geni/i) {
-		printDebug($DBG_NONE, "ERROR: Login FAILED for www.geni.com!!\n");
+		printDebug($DBG_PROGRESS, "ERROR: Login FAILED for www.geni.com!!\n");
 		exit();
 	}
 
 	$env{'logged_in'} = 1;
-	printDebug($DBG_NONE, "Login PASSED for www.geni.com!!\n");
+	printDebug($DBG_PROGRESS, "Login PASSED for www.geni.com!!\n");
 }
 
 #
@@ -244,7 +244,7 @@ sub geniLogin() {
 #
 sub geniLogout() {
 	return if !$env{'logged_in'};
-	printDebug($DBG_NONE, "Logging out of www.geni.com\n");
+	printDebug($DBG_PROGRESS, "Logging out of www.geni.com\n");
 	$m->get("http://www.geni.com/logout?ref=ph");
 }
 
@@ -1631,8 +1631,8 @@ sub main() {
 	$debug_fh->autoflush(1);
 
 	if ($env{'password'} eq "") {
-		my $password_file = "/tmp/$env{'username_short'}\.txt";
-		if (-e $password_file) {
+		if ($run_from_cgi) {
+			my $password_file = "/tmp/$env{'username_short'}\.txt";
 			my $fh = createReadFH($password_file);
 			$env{'password'} = <$fh>;
 			unlink $password_file;
