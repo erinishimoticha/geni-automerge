@@ -88,7 +88,7 @@ sub init(){
 # Print the syntax for running the script including all command line options
 #
 sub printHelp() {
-	print STDERR "\nmerge_dr.pl\n\n";
+	print STDERR "\ngeni-automerge.pl\n\n";
 	print STDERR "-u \"user\@email.com\"\n";
 	print STDERR "-api_get_timeframe X: default is 10 seconds\n";
 	print STDERR "-api_get_limit X: default is 18 seconds\n";
@@ -1244,7 +1244,7 @@ sub rangeBeginEnd($$$) {
 	if (!$range_begin) {
 		$range_begin = 1;
 	}
-	printDebug($DBG_PROGRESS, "First Page: $range_begin\n");
+	printDebug($DBG_PROGRESS, "Page Range $range_begin -> $range_end\n");
 
 	return ($range_begin, $range_end);
 }
@@ -1311,7 +1311,7 @@ sub getJSON ($$) {
 	getPage($filename, $url);
 	if (jsonSanityCheck($filename) == 0) {
 		unlink $filename;
-		next;
+		return 0;
 	}
 	open (INF,$filename);
 	my $json_data = <INF>;
@@ -1333,26 +1333,28 @@ sub traversePendingMergePages($$) {
 	($range_begin, $range_end) = rangeBeginEnd($range_begin, $range_end, "PENDING_MERGES");
 
 	my $filename = "$env{'datadir'}/merge_list_$range_begin\.json";
-	my $next_page = "https://www.geni.com/api/profiles/merges?collaborators=true&order=last_modified_at&direction=asc&page=$range_begin";
-	my $json_page = getJSON($filename, $next_page);
+	my $url = sprintf("https://www.geni.com/api/profiles/merges?collaborators=true&order=last_modified_at&direction=asc&page=%s%s",
+				$range_begin,
+				$env{'all_of_geni'} ? "&all=true" : "");
+	my $json_page = getJSON($filename, $url);
 	return 0 if (!$json_page);
 
-	while ($next_page ne "") {
-		$next_page =~ /page=(\d+)/;
+	while ($url ne "") {
+		$url =~ /page=(\d+)/;
 		my $page = $1;
 		$env{'log_file'} = "$env{'logdir'}/logfile_" . dateHourMinuteSecond() . "_page_$page\.html";
 
 		my $loop_start_time = time();
 		my $page_profile_count = 0;
 		my $filename = "$env{'datadir'}/merge_list_$page.json";
-		my $json_page = getJSON($filename, $next_page);
+		my $json_page = getJSON($filename, $url);
 		if (!$json_page) {
 			printRunTime($page, $loop_start_time);
 			last;
 		}
 
 		$page = $json_page->{'page'};
-		$next_page = $json_page->{'next_page'};
+		$url = $json_page->{'next_page'};
 
 		foreach my $result (@{$json_page->{'results'}}) {
 			$env{'profiles'}++;
