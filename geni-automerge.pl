@@ -1566,7 +1566,7 @@ sub main() {
 		system "rm -rf $env{'logdir'}/*";
 		(mkdir $env{'home_dir'}, 0755) if !(-e $env{'home_dir'});
 		(mkdir $env{'user_home_dir'}, 0755) if !($env{'user_home_dir'} && -e $env{'user_home_dir'});
-	}elseif($env{'delete'}){
+	}elsif($env{'delete'}){
 		system "rm -rf $env{'datadir'}/*";
 	}
 
