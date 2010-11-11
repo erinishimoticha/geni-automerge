@@ -4,14 +4,13 @@ use strict;
 use WWW::Mechanize;
 use HTTP::Cookies;
 use Class::Struct;
-use IO::File;
 use Time::HiRes;
 use JSON;
 # http://search.cpan.org/~maurice/Text-DoubleMetaphone-0.07/DoubleMetaphone.pm
 use Text::DoubleMetaphone qw( double_metaphone );
 
 # globals and constants
-my (%env, %debug, $debug_fh, $merge_log_fh, $m, %blacklist_managers, @get_history);
+my (%env, %debug, $m, %blacklist_managers, @get_history);
 my $m = WWW::Mechanize->new(autocheck => 0);
 my $DBG_NONE			= "DBG_NONE"; # Normal output
 my $DBG_PROGRESS		= "DBG_PROGRESS";
@@ -115,8 +114,8 @@ sub printDebug($$) {
 	if ($debug{"console_" . $debug_flag}) {
 		print STDERR $msg;
 	}
-	if ($debug{"file_" . $debug_flag} && $debug_fh) {
-		print $debug_fh $msg;
+	if ($debug{"file_" . $debug_flag}) {
+		write_file($env{'log_file'}, $msg, 1);
 	}
 }
 
@@ -131,33 +130,15 @@ sub gracefulExit($) {
 	exit();
 }
 
-#
-# Create a FH for reading a file and return that FH
-#
-sub createReadFH($) {
-	my $filename = shift;
-	my $fh = new IO::File;
-	$fh->open("$filename", "r") || gracefulExit("\n\nERROR: createReadFH could not open '$filename'\n\n");
-	return $fh;
-}
-
-#
-# Create a FH for writing to a file and return that FH
-#
-sub createWriteFH($$$) {
-	my $debug_msg = shift;
-	my $filename = shift;
-	my $append = shift;
-
-	my $fh = new IO::File;
-	if ($append) {
-		$fh->open(">> $filename") || gracefulExit("\n\nERROR: createWriteFH could not open append '$filename'\n\n");
-		printDebug($DBG_NONE, "$debug_msg: Appending to '$filename'\n") if $debug_msg;
-	} else {
-		$fh->open("> $filename") || gracefulExit("\n\nERROR: createWriteFH could not open '$filename'\n\n");
-		printDebug($DBG_NONE, "$debug_msg: Creating '$filename'\n") if $debug_msg;
-	}
-	return $fh;
+sub write_file($$$){
+	my $file = shift;
+	my $data = shift;
+	my $append = (shift) ? ">>" : ">"; # use 1 to append. 0 overwrites the entire file
+	open(OUT,"$append$file") || gracefulExit("\n\nERROR: write_file could not open '$file'\n\n");
+	while(!(flock OUT, 2)){}
+	print OUT $data;
+	flock OUT, 8; # unlock
+	close OUT;
 }
 
 sub prependZero($) {
@@ -226,11 +207,7 @@ sub geniLogin() {
 	$m->field("profile[password]" => $env{'password'});
 	$m->click();
 	
-	my $login_fh = createWriteFH("", "$env{'datadir'}/login.html", 0);
 	my $output = $m->content();
-	print $login_fh $output;
-	undef $login_fh;
-
 	if ($output =~ /Welcome to Geni/i) {
 		printDebug($DBG_PROGRESS, "ERROR: Login FAILED for www.geni.com!!\n");
 		exit();
@@ -252,9 +229,9 @@ sub geniLogout() {
 sub jsonSanityCheck($) {
 	my $filename = shift;
 
-	my $fh = createReadFH($filename);
-	my $json_data = <$fh>;
-	undef $fh;
+	open (INF,$filename);
+	my $json_data = <INF>;
+	close INF;
 
 	# We "should" never hit this
 	if ($json_data =~ /Rate limit exceeded/i) {
@@ -383,10 +360,8 @@ sub getPage($$) {
 		sleep($sleep_length);
 	}
 
-	my $fh = createWriteFH("", $filename, 0);
 	$m->get($url);
-	print $fh $m->content();
-	undef $fh;
+	write_file($filename, $m->content(), 0);
 
 	updateGetHistory();
 }
@@ -1102,13 +1077,11 @@ sub mergeProfiles($$$$) {
 	my $id2_url = "<a href=\"http://www.geni.com/people/id/$id2\">$id2</a>";
 
 	(my $sec, my $min, my $hour, my $mday, my $mon, my $year, my $wday, my $yday, my $isdst) = localtime(time);
-	my $merge_log_entry =
-		sprintf("%4d-%02d-%02d %02d:%02d:%02d :: %s :: %s :: Merged %s with %s\n",
+	write_file($env{'merge_log_file'}, sprintf("%4d-%02d-%02d %02d:%02d:%02d :: %s :: %s :: Merged %s with %s\n",
  			$year+1900, $mon+1, $mday, $hour, $min, $sec,
-			$env{'username'}, $desc, $id1_url, $id2_url);
+			$env{'username'}, $desc, $id1_url, $id2_url), 1);
 	$env{'matches'}++;
 	printDebug($DBG_PROGRESS, "MERGING: $id1 and $id2\n");
-	printf $merge_log_fh "$merge_log_entry\n";
 
 	if (!$env{'logged_in'}) {
 		geniLogin();
@@ -1276,16 +1249,6 @@ sub rangeBeginEnd($$$) {
 	return ($range_begin, $range_end);
 }
 
-sub createDebugFH($) {
-	my $page_num = shift;
-
-	undef $debug_fh;
-	$env{'log_file'}	= "$env{'logdir'}/logfile_" . dateHourMinuteSecond() . "_page_$page_num\.html";
-	$debug_fh		= createWriteFH("logfile", $env{'log_file'}, 0);
-	$debug_fh->autoflush(1);
-	print $debug_fh "<pre>";
-}
-
 sub printRunTime($$) {
 	my $page_num		= shift;
 	my $loop_start_time	= shift;
@@ -1311,6 +1274,7 @@ sub traverseTreeConflicts($$) {
 
 	for (my $i = $range_begin; $i <= $range_end; $i++) {
 		createDebugFH($i);
+	#$env{'log_file'}	= "$env{'logdir'}/logfile_" . dateHourMinuteSecond() . "_page_$page_num\.html";
 
 		my $loop_start_time = time();
 		my $page_profile_count = 0;
@@ -1320,15 +1284,15 @@ sub traverseTreeConflicts($$) {
 
 		# Screen scrape this until geni is able to give us an API for our tree conflicts list
 		my @profiles_with_tree_conflicts;
-		my $fh = createReadFH($filename);
-		while(<$fh>) {
+		open (INF,$filename);
+		while(<INF>) {
 # <a href="/people/Martha-BECK/6000000000252927371" class="linkTertiary" rel="friend">Martha Ann BECK</a> <span id="shared_icon_6000000000252927371" style="display:none;"><img alt="Icn_world" src="http://assets0.geni.com/images/icn_world.gif?1258076471" style="vertical-align:-3px;" title="Public Profile" /></span>
 # <a href="/people/Catherine-NUECHTER/6000000000252921711" class="linkTertiary" rel="friend">Catherine Elizabeth NUECHTER</a> <span id="shared_icon_6000000000252921711" style="display:none;"><img alt="Icn_world" src="http://assets0.geni.com/images/icn_world.gif?1258076471" style="vertical-align:-3px;" title="Public Profile" /></span>
 			if (/a href=\"\/people\/.*?\/(\d+)\" class.*Public Profile/) {
 				push @profiles_with_tree_conflicts, $1;
 			}
 		}
-		undef $fh;
+		close INF;
 
 		foreach my $profile (@profiles_with_tree_conflicts) {
 			analyzeTreeConflict($profile);
@@ -1349,11 +1313,11 @@ sub getJSON ($$) {
 		unlink $filename;
 		next;
 	}
-	my $fh = createReadFH($filename);
-	my $json_data = <$fh>;
+	open (INF,$filename);
+	my $json_data = <INF>;
 	my $json = new JSON;
 	my $json_structure = $json->allow_nonref->relaxed->decode($json_data);
-	undef $fh;
+	close INF;
 
 	printDebug($DBG_JSON, sprintf ("Pretty JSON:\n%s", $json->pretty->encode($json_structure))); 
 	return $json_structure;
@@ -1376,7 +1340,7 @@ sub traversePendingMergePages($$) {
 	while ($next_page ne "") {
 		$next_page =~ /page=(\d+)/;
 		my $page = $1;
-		createDebugFH($page);
+		$env{'log_file'} = "$env{'logdir'}/logfile_" . dateHourMinuteSecond() . "_page_$page\.html";
 
 		my $loop_start_time = time();
 		my $page_profile_count = 0;
@@ -1602,21 +1566,13 @@ sub main() {
 	(mkdir $env{'datadir'}, 0755) if !(-e $env{'datadir'});
 	(mkdir $env{'logdir'}, 0755) if !(-e $env{'logdir'});
 
-	my $print_pre = !(-e $env{'merge_log_file'});
-	$merge_log_fh = createWriteFH("Merge History", $env{'merge_log_file'}, 1);
-	$merge_log_fh->autoflush(1);
-	print $merge_log_fh "<pre>\n" if $print_pre;
-
-	$debug_fh = createWriteFH("logfile", $env{'log_file'}, 0);
-	$debug_fh->autoflush(1);
-
 	if ($env{'password'} eq "") {
 		if ($run_from_cgi) {
 			my $password_file = "/tmp/$env{'username_short'}\.txt";
-			my $fh = createReadFH($password_file);
-			$env{'password'} = <$fh>;
+			open (INF,$password_file);
+			$env{'password'} = <INF>;
 			unlink $password_file;
-			undef $fh;
+			close INF;
 		} else {
 			print "password: ";
 			$env{'password'} = <STDIN>;
@@ -1658,8 +1614,6 @@ sub main() {
 			int(($run_time % 3600) / 60),
 			int($run_time % 60)));
 
-	undef $merge_log_fh;
-	undef $debug_fh;
 }
 
 __END__
