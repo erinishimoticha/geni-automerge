@@ -1347,7 +1347,7 @@ sub getJSON ($$) {
 	getPage($filename, $url);
 	if (jsonSanityCheck($filename) == 0) {
 		unlink $filename;
-		next;
+		return 0;
 	}
 	my $fh = createReadFH($filename);
 	my $json_data = <$fh>;
