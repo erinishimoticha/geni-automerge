@@ -697,12 +697,13 @@ sub compareNames($$$$) {
 	my $right_name	= shift;
 	my $debug	= shift;
 
-	if (($left_name && !$right_name) ||
-	    (!$left_name && $right_name) ||
-	    ($left_name eq $right_name)) {
+	if ($left_name eq $right_name) {
 		printDebug($DBG_NONE, sprintf("MATCH Whole Name: left '%s' , right '%s'\n", $left_name, $right_name)) if $debug;
 		return 1;
 	}
+
+	# It one name is blank then be conservative and return false
+	return 0 if (!$left_name || !$right_name);
 
 	my $left_name_first	= "";
 	my $left_name_middle	= "";
@@ -1164,10 +1165,8 @@ sub checkPublic($) {
 	# $m->get($url);
 }
 
-sub analyzeTreeConflict($$$$) {
+sub analyzeTreeConflict($$) {
 	my $profile_id	= shift;
-	my $actor	= shift;
-	my $manager	= shift;
 	my $issue_type	= shift;
 	
 	if ($profile_id =~ /profiles\/(\d+)/) {
@@ -1218,6 +1217,10 @@ sub analyzeTreeConflict($$$$) {
 				printDebug($DBG_PROGRESS, "ERROR: $i $j is missing from the json\n");
 				next;
 			}
+			
+			# If the name is something like "Daughter" or "Unknown" then that
+			# will cleanup down to nothing so be conservative and skip it.
+			next if (!$name);
 
 			if ($rel eq "partner") {
 				if ($partner_type eq "parents") {
@@ -1234,15 +1237,15 @@ sub analyzeTreeConflict($$$$) {
 
 				if ($partner_type eq "parents") {
 					if ($gender eq "male") {
-						avoidDuplicatesPush("", \@brothers, "$id:$name:$gender") if ($issue_type eq "parent");
+						avoidDuplicatesPush("", \@brothers, "$id:$name:$gender") if ($issue_type eq "siblings");
 					} elsif ($gender eq "female") {
-						avoidDuplicatesPush("", \@sisters, "$id:$name:$gender") if ($issue_type eq "parent");
+						avoidDuplicatesPush("", \@sisters, "$id:$name:$gender") if ($issue_type eq "siblings");
 					}
 				} elsif ($partner_type eq "spouses") {
 					if ($gender eq "male") {
-						avoidDuplicatesPush("", \@sons, "$id:$name:$gender") if ($issue_type eq "partner");
+						avoidDuplicatesPush("", \@sons, "$id:$name:$gender") if ($issue_type eq "children");
 					} elsif ($gender eq "female") {
-						avoidDuplicatesPush("", \@daughters, "$id:$name:$gender") if ($issue_type eq "partner");
+						avoidDuplicatesPush("", \@daughters, "$id:$name:$gender") if ($issue_type eq "children");
 					}
 				}
 
@@ -1265,6 +1268,7 @@ sub analyzeTreeConflict($$$$) {
 	($a, $b) = compareAllProfiles("Brothers", \@brothers); $profile_count += $a; $match_count += $b;
 	($a, $b) = compareAllProfiles("Sisters", \@sisters); $profile_count += $a; $match_count += $b;
 	printDebug($DBG_PROGRESS, "Matched $match_count/$profile_count\n");
+
 	unlink $filename;
 }
 
@@ -1415,10 +1419,16 @@ sub traverseJSONPages($$$) {
 					analyzePendingMerge($1, $2);
 				}
 			} elsif ($type eq "TREE_CONFLICTS") {
-			 	analyzeTreeConflict($json_list_entry->{'profile'},
-							$json_list_entry->{'actor'},
-							$json_list_entry->{'manager'},
-							$json_list_entry->{'issue_type'});
+				my $conflict_type = $json_list_entry->{'issue_type'};
+				if ($conflict_type eq "parent") {
+			 		analyzeTreeConflict($json_list_entry->{'profile'}, "parent");
+			 		analyzeTreeConflict($json_list_entry->{'profile'}, "siblings");
+				} elsif ($conflict_type eq "partner") {
+			 		analyzeTreeConflict($json_list_entry->{'profile'}, "partner");
+			 		analyzeTreeConflict($json_list_entry->{'profile'}, "children");
+				} else {
+					printDebug($DBG_PROGRESS, "ERROR: Unknown tree conflict type '$conflict_type'\n");
+				}
 			} elsif ($type eq "TREE_MATCHES") {
 				analyzeTreeMatch(0);
 			} elsif ($type eq "DATA_CONFLICTS") {
@@ -1709,8 +1719,10 @@ sub main() {
 
 	} elsif ($env{'action'} eq "tree_conflict") {
 		validateProfileID($left_id);
-		analyzeTreeConflict($left_id, 0, 0, "parent");
-		analyzeTreeConflict($left_id, 0, 0, "partner");
+		analyzeTreeConflict($left_id, "parent");
+		analyzeTreeConflict($left_id, "siblings");
+		analyzeTreeConflict($left_id, "partner");
+		analyzeTreeConflict($left_id, "children");
 
 	} elsif ($env{'action'} eq "tree_matches") {
 		printDebug($DBG_PROGRESS, "NOTE: The -all option is not supported for Tree Matches\n") if $env{'all_of_geni'};
