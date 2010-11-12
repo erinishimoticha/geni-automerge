@@ -1333,9 +1333,9 @@ sub traversePendingMergePages($$) {
 
 	($range_begin, $range_end) = rangeBeginEnd($range_begin, $range_end, "PENDING_MERGES");
 
-	my $filename = "$env{'datadir'}/merge_list_$range_begin\.json";
+	my $filename = "$env{'datadir'}/merge_list_$range_end\.json";
 	my $url = sprintf("https://www.geni.com/api/profiles/merges?collaborators=true&order=last_modified_at&direction=asc&page=%s%s",
-				$range_begin,
+				$range_end,
 				$env{'all_of_geni'} ? "&all=true" : "");
 	my $json_page = getJSON($filename, $url);
 	return 0 if (!$json_page);
@@ -1345,9 +1345,9 @@ sub traversePendingMergePages($$) {
 	while ($url ne "") {
 		$url =~ /page=(\d+)/;
 		my $page = $1;
-		if ($page + 1 <= $range_end) {
+		if ($page - 1 >= $range_begin) {
 			$next_url = sprintf("https://www.geni.com/api/profiles/merges?collaborators=true&order=last_modified_at&direction=asc&page=%s%s",
-						$page + 1,
+						$page - 1,
 						$env{'all_of_geni'} ? "&all=true" : "");
 		} else {
 			$next_url = "";
