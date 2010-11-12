@@ -39,6 +39,7 @@ sub init(){
 	$env{'merge_little_trees'}	= 0;
 	$env{'all_of_geni'}		= 0;
 	$env{'loop'}			= 0;
+	$env{'direction'}		= "asc"; # Must be asc or desc
 
 	$debug{"file_" . $DBG_NONE}		= 1;
 	$debug{"file_" . $DBG_PROGRESS}		= 1;
@@ -1346,13 +1347,12 @@ sub getJSON ($$) {
 	return $json_structure;
 }
 
-sub apiURL($$$) {
+sub apiURL($$) {
 	my $api_action	= shift;
-	my $direction	= shift;
 	my $page	= shift;
 	return sprintf("https://www.geni.com/api/profiles/%s?collaborators=true&order=last_modified_at&direction=%s&page=%s%s",
 			$api_action,
-			$direction,
+			$env{'direction'},
 			$page,
 			$env{'all_of_geni'} ? "&all=true" : "");
 }
@@ -1381,9 +1381,8 @@ sub traverseJSONPages($$$) {
 	}
 
 	($range_begin, $range_end) = rangeBeginEnd($range_begin, $range_end, $type, $api_action);
-	my $direction = "asc";
 	my $filename = "$env{'datadir'}/$api_action\_$range_end\.json";
-	my $url = apiURL($api_action, $direction, $range_end);
+	my $url = apiURL($api_action, $range_end);
 	my $json_page = getJSON($filename, $url);
 	return 0 if (!$json_page);
 
@@ -1392,7 +1391,7 @@ sub traverseJSONPages($$$) {
 		$url =~ /page=(\d+)/;
 		my $page = $1;
 		if ($page - 1 >= $range_begin) {
-			$next_url = apiURL($api_action, $direction, $page - 1);
+			$next_url = apiURL($api_action, $page - 1);
 		} else {
 			$next_url = "";
 		}
@@ -1627,6 +1626,13 @@ sub main() {
 
 		} elsif ($ARGV[$i] eq "-run_from_cgi") {
 			$run_from_cgi = 1;
+
+		# This is used if you want to loop through the most recent merges over and over.
+		# So "-loop -desc -rb 1 -re 50" will loop through the first 50 pages of merge
+		# issues over and over again.  These are likely to be merge issues from the past
+		# 48 hours or so.
+		} elsif ($ARGV[$i] eq "-desc") {
+			$env{'direction'} = "desc";
 
 		} elsif ($ARGV[$i] eq "-cp" || $ARGV[$i] eq "-check_public") {
 			$env{'action'} = "check_public";
