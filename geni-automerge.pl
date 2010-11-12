@@ -10,7 +10,7 @@ use JSON;
 use Text::DoubleMetaphone qw( double_metaphone );
 
 # globals and constants
-my (%env, %debug, $m, %blacklist_managers, @get_history);
+my (%env, %debug, %blacklist_managers, @get_history);
 my $m = WWW::Mechanize->new(autocheck => 0);
 my $DBG_NONE			= "DBG_NONE"; # Normal output
 my $DBG_PROGRESS		= "DBG_PROGRESS";
@@ -97,8 +97,8 @@ sub printHelp() {
 	print STDERR "-re X (optional): re is short for -range_end, X is the ending page\n";
 	print STDERR "-pm X Y: pm is short for -pendingmerge.  X and Y are the two profile IDs to merge\n";
 	print STDERR "-test: Sanity check the comparison functions\n";
-	print STDERR "-treeconflicts: Analyze your list of Tree Conflicts\n";
-	print STDERR "-treeconflict : Analyze profile X for Tree Conflicts\n";
+	print STDERR "-tree_conflicts: Analyze your list of Tree Conflicts\n";
+	print STDERR "-tree_conflict : Analyze profile X for Tree Conflicts\n";
 	print STDERR "-merge_little_trees: Enables mering a little tree into the big tree\n";
 	print STDERR "-h -help : print this menu\n\n";
 	print STDERR "\n";
@@ -124,8 +124,13 @@ sub printDebug($$) {
 #
 sub gracefulExit($) {
 	my $msg = shift;
-	printDebug($DBG_PROGRESS, "$env{'matches'} matches out of $env{'profiles'} profiles\n");
-	printDebug($DBG_PROGRESS, $msg);
+	
+	# If the logfile doesn't exist don't try to write to it
+	if (-e $env{'log_file'}) {
+		printDebug($DBG_PROGRESS, $msg);
+	} else {
+		print STDERR $msg;
+	}
 	geniLogout();
 	exit();
 }
@@ -169,7 +174,7 @@ sub todaysDate() {
 	return "$year\_$mon\_$mday";
 }
 
-# This isn't working yet
+# todo: get this working, geni keeps changing the web form that we currently use to login
 sub geniLoginAPI() {
 	if (!$env{'username'}) {
 		print STDERR "\nERROR: username is blank.  You must specify your geni username via '-u username'\n";
@@ -325,18 +330,7 @@ sub roundup($) {
 	return(($n == int($n)) ? $n : int($n + 1))
 }
 
-sub getPage($$) {
-	my $filename = shift;
-	my $url = shift;
-
-	if (-e "$filename") {
-		printDebug($DBG_IO, "getPage(cached): $url\n");
-		return;
-	}
-
-	geniLogin() if !$env{'logged_in'};
-	printDebug($DBG_IO, "getPage(fetch): $url\n");
-
+sub sleepIfNeeded() {
 	(my $time_sec, my $time_usec) = Time::HiRes::gettimeofday();
 	my $time_current = "$time_sec.$time_usec";
 	my @new_get_history;
@@ -359,10 +353,22 @@ sub getPage($$) {
 			"$gets_in_api_timeframe gets() in the past $env{'get_timeframe'} seconds....sleeping for $sleep_length seconds\n");
 		sleep($sleep_length);
 	}
+}
 
+sub getPage($$) {
+	my $filename = shift;
+	my $url = shift;
+
+	if (-e "$filename") {
+		printDebug($DBG_IO, "getPage(cached): $url\n");
+		return;
+	}
+
+	geniLogin() if !$env{'logged_in'};
+	printDebug($DBG_IO, "getPage(fetch): $url\n");
+	sleepIfNeeded();
 	$m->get($url);
 	write_file($filename, $m->content(), 0);
-
 	updateGetHistory();
 }
 
@@ -516,6 +522,7 @@ sub cleanupNameGuts($) {
 	# Remove punctuation
 	$name =~ s/ d\'/ /g;
 	$name =~ s/\./ /g;
+	$name =~ s/\:/ /g;
 	$name =~ s/\,/ /g;
 	$name =~ s/\'/ /g;
 	$name =~ s/\^/ /g;
@@ -889,7 +896,7 @@ sub avoidDuplicatesPush($$$) {
 	my $value_to_add= shift;
 
 	# We're storing profiles in the array
-	if ($value_to_add =~ /^\d+$/) {
+	if ($value_to_add =~ /^\d+/) {
 		foreach my $profile_id (@$value_array) {
 			return if ($profile_id eq $value_to_add);
 		}
@@ -909,6 +916,7 @@ sub mergeURLHTML($$) {
 	my $id2			= shift;
 	return "<a href=\"http://www.geni.com/merge/compare/$id1?return=merge_center&to=$id2\">http://www.geni.com/merge/compare/$id1?return=merge_center&to=$id2</a>";
 }
+
 sub compareProfiles($$$) {
 	my $id1			= shift;
 	my $id2			= shift;
@@ -982,6 +990,7 @@ sub compareProfiles($$$) {
 		$geni_profile->death_year($json_profile->{'focus'}->{'death_year'});
 		$geni_profile->birth_date($json_profile->{'focus'}->{'birth_date'});
 		$geni_profile->birth_year($json_profile->{'focus'}->{'birth_year'});
+		$geni_profile->id($json_profile->{'focus'}->{'id'});
 		
 		my @fathers_array;
 		my @mothers_array;
@@ -1041,6 +1050,16 @@ sub compareProfiles($$$) {
 	# volume of files gets out of hand (30k+ in 24 hours) pretty quickly.
 	unlink $filename if $delete_file;
 
+	# This is a big safety net in case in case the API somehow were to
+	# return a different merge comparison than what we asked for
+	if (($left_profile->id ne $id1 && $left_profile->id ne $id2) ||
+	    ($right_profile->id ne $id1 && $right_profile->id ne $id2)) {
+		printDebug($DBG_NONE,
+			sprintf("WEIRD: asked for '%s' and '%s' but got '%s' and '%s'\n",
+				$id1, $id2, $left_profile->id, $right_profile->id));
+		return 0;
+	}
+
 	if (profileBasicsMatch($left_profile, $right_profile) == 0) {
 		return 0;
 	}
@@ -1082,11 +1101,9 @@ sub mergeProfiles($$$$) {
  			$year+1900, $mon+1, $mday, $hour, $min, $sec,
 			$env{'username'}, $desc, $id1_url, $id2_url), 1);
 	$env{'matches'}++;
+	geniLogin() if !$env{'logged_in'};
 	printDebug($DBG_PROGRESS, "MERGING: $id1 and $id2\n");
-
-	if (!$env{'logged_in'}) {
-		geniLogin();
-	}
+	sleepIfNeeded();
 	$m->post($merge_url_api);
 	updateGetHistory();
 }
@@ -1099,27 +1116,40 @@ sub compareAllProfiles($$) {
 	my $match_count = 0;
 
 	for (my $i = 0; $i <= $#profiles_array; $i++) {
+		(my $i_id, my $i_name, my $gender) = split(/:/, $profiles_array[$i]);
+
 		for (my $j = $i + 1; $j <= $#profiles_array; $j++) {
-			# dwalton - here now
-			if (compareProfiles($profiles_array[$i], $profiles_array[$j], 0)) {
-				printDebug($DBG_PROGRESS, "   MATCH: ");
-				# mergeProfiles("https://www.geni.com/api/profiles/merge/$id1,$id2", $id1, $id2, "TREE_CONFLICT");
-				$match_count++;
+			(my $j_id, my $j_name, my $gender) = split(/:/, $profiles_array[$j]);
+			if (compareNames($gender, $i_name, $j_name, 0)) {
+				if (compareProfiles($i_id, $j_id, 1)) {
+					printDebug($DBG_PROGRESS, "TREE_CONFLICT_COMPARE: $text\[$i] $i_name vs. $text\[$j] $j_name - MATCH\n");
+					mergeProfiles("https://www.geni.com/api/profiles/merge/$i_id,$j_id", $i_id, $j_id, "TREE_CONFLICT");
+					$match_count++;
+				} else {
+					printDebug($DBG_PROGRESS, "TREE_CONFLICT_COMPARE: $text\[$i] $i_name vs. $text\[$j] $j_name - NO_MATCH\n");
+				}
 			} else {
-				printDebug($DBG_PROGRESS, "NO_MATCH: ");
+				printDebug($DBG_PROGRESS, "TREE_CONFLICT_COMPARE: $text\[$i] $i_name vs. $text\[$j] $j_name - NAME_MISMATCH\n");
 			}
-			printDebug($DBG_PROGRESS, "Tree Conflict $text\[$i] $profiles_array[$i] vs $text\[$j] $profiles_array[$j]\n");
 			$profile_count++;
 		}
 	}
 
 	return ($profile_count, $match_count);
 }
-sub analyzeTreeConflict($) {
-	my $profile_id = shift;
-	my $filename = "$env{'datadir'}/$profile_id\.json";
-	print "analyzeTreeConflict called for $profile_id\n";
+sub analyzeTreeConflict($$$$) {
+	my $profile_id	= shift;
+	my $actor	= shift;
+	my $manager	= shift;
+	my $issue_type	= shift;
+	
+	if ($profile_id =~ /profiles\/(\d+)/) {
+		$profile_id = $1;
+	}
 
+	printDebug($DBG_PROGRESS, "\nTree Conflict analyze for '$profile_id', type '$issue_type'\n");
+
+	my $filename = "$env{'datadir'}/$profile_id\.json";
 	my $json_text = getJSON($filename, "https://www.geni.com/api/profiles/immediate_family/$profile_id");
 	return 0 if (!$json_text);
 
@@ -1152,6 +1182,11 @@ sub analyzeTreeConflict($) {
 			my $rel = $json_profile->{'nodes'}->{$i}->{'edges'}->{$j}->{'rel'};
 			my $gender = $json_profile->{'nodes'}->{$j}->{'gender'};
 			my $id = $json_profile->{'nodes'}->{$j}->{'id'};
+			my $name_first = $json_profile->{'nodes'}->{$j}->{'first_name'};
+			my $name_middle = $json_profile->{'nodes'}->{$j}->{'middle_name'};
+			my $name_last = $json_profile->{'nodes'}->{$j}->{'last_name'};
+			my $name_maiden = $json_profile->{'nodes'}->{$j}->{'maiden_name'};
+			my $name = cleanupName($name_first, $name_middle, $name_last, $name_maiden);
 			if ($id eq "") {
 				printDebug($DBG_PROGRESS, "ERROR: $i $j is missing from the json\n");
 				next;
@@ -1160,29 +1195,32 @@ sub analyzeTreeConflict($) {
 			if ($rel eq "partner") {
 				if ($partner_type eq "parents") {
 					if ($gender eq "male") {
-						avoidDuplicatesPush("", \@fathers, $id);
+						avoidDuplicatesPush("", \@fathers, "$id:$name:$gender") if ($issue_type eq "parent");
 					} elsif ($gender eq "female") {
-						avoidDuplicatesPush("", \@mothers, $id);
+						avoidDuplicatesPush("", \@mothers, "$id:$name:$gender") if ($issue_type eq "parent");
 					}
 				} elsif ($partner_type eq "spouses") {
-					avoidDuplicatesPush("", \@spouses, $id);
+					avoidDuplicatesPush("", \@spouses, "$id:$name:$gender") if ($issue_type eq "partner");
 				}
 
 			} elsif ($rel eq "child") {
 
 				if ($partner_type eq "parents") {
 					if ($gender eq "male") {
-						avoidDuplicatesPush("", \@brothers, $id);
+						avoidDuplicatesPush("", \@brothers, "$id:$name:$gender") if ($issue_type eq "parent");
 					} elsif ($gender eq "female") {
-						avoidDuplicatesPush("", \@sisters, $id);
+						avoidDuplicatesPush("", \@sisters, "$id:$name:$gender") if ($issue_type eq "parent");
 					}
 				} elsif ($partner_type eq "spouses") {
 					if ($gender eq "male") {
-						avoidDuplicatesPush("", \@sons, $id);
+						avoidDuplicatesPush("", \@sons, "$id:$name:$gender") if ($issue_type eq "partner");
 					} elsif ($gender eq "female") {
-						avoidDuplicatesPush("", \@daughters, $id);
+						avoidDuplicatesPush("", \@daughters, "$id:$name:$gender") if ($issue_type eq "partner");
 					}
 				}
+
+			# A "hidden_child" is just a placeholder profile and can be ignored
+			} elsif ($rel eq "hidden_child") {
 			} else {
 				printDebug($DBG_NONE, "ERROR: unknown rel type '$rel'\n");
 			}
@@ -1191,14 +1229,16 @@ sub analyzeTreeConflict($) {
 
 	my $profile_count = 0;
 	my $match_count = 0;
-	(my $a, my $b) = compareAllProfiles("Father", \@fathers); $profile_count += $a; $match_count += $b;
-	(my $a, my $b) = compareAllProfiles("Mother", \@mothers); $profile_count += $a; $match_count += $b;
-	(my $a, my $b) = compareAllProfiles("Spouse", \@spouses); $profile_count += $a; $match_count += $b;
-	(my $a, my $b) = compareAllProfiles("Sons", \@sons); $profile_count += $a; $match_count += $b;
-	(my $a, my $b) = compareAllProfiles("Daughters", \@daughters); $profile_count += $a; $match_count += $b;
-	(my $a, my $b) = compareAllProfiles("Brothers", \@brothers); $profile_count += $a; $match_count += $b;
-	(my $a, my $b) = compareAllProfiles("Sisters", \@sisters); $profile_count += $a; $match_count += $b;
+	my $a, my $b;
+	($a, $b) = compareAllProfiles("Father", \@fathers); $profile_count += $a; $match_count += $b;
+	($a, $b) = compareAllProfiles("Mother", \@mothers); $profile_count += $a; $match_count += $b;
+	($a, $b) = compareAllProfiles("Spouse", \@spouses); $profile_count += $a; $match_count += $b;
+	($a, $b) = compareAllProfiles("Sons", \@sons); $profile_count += $a; $match_count += $b;
+	($a, $b) = compareAllProfiles("Daughters", \@daughters); $profile_count += $a; $match_count += $b;
+	($a, $b) = compareAllProfiles("Brothers", \@brothers); $profile_count += $a; $match_count += $b;
+	($a, $b) = compareAllProfiles("Sisters", \@sisters); $profile_count += $a; $match_count += $b;
 	printDebug($DBG_PROGRESS, "Matched $match_count/$profile_count\n");
+	unlink $filename;
 }
 
 sub analyzePendingMerge($$) {
@@ -1211,16 +1251,16 @@ sub analyzePendingMerge($$) {
 }
 
 
-sub rangeBeginEnd($$$) {
+sub rangeBeginEnd($$$$) {
 	my $range_begin = shift;
 	my $range_end   = shift;
 	my $type	= shift;
+	my $api_action	= shift;
 
 	my $filename = sprintf("%s/%s_count.json",
-				$env{'datadir'},
-				$type eq "TREE_CONFLICTS" ? "tree_conflicts" : "merges");
+				$env{'datadir'}, $api_action);
 	my $url = sprintf("https://www.geni.com/api/profiles/%s?collaborators=true&count=true%s",
-			$type eq "TREE_CONFLICTS" ? "treeconflicts" : "merges",
+			$api_action,
 			$env{'all_of_geni'} ? "&all=true" : "");
 
 	my $json_page = getJSON($filename, $url);
@@ -1235,11 +1275,7 @@ sub rangeBeginEnd($$$) {
 	}
 
 	for (my $i = $range_begin; $i <= $range_end; $i++) {
-		if ($type eq "TREE_CONFLICTS" && -e "$env{'datadir'}/tree_conflicts_$i.json") {
-			$range_begin = $i;
-		} elsif ($type eq "PENDING_MERGES" && -e "$env{'datadir'}/merge_list_$i.json") {
-			$range_begin = $i;
-		}
+		$range_begin = $i if (-e "$env{'datadir'}/$api_action\_$i.json");
 	}
 
 	if (!$range_begin) {
@@ -1248,61 +1284,6 @@ sub rangeBeginEnd($$$) {
 	printDebug($DBG_PROGRESS, "Page Range $range_begin -> $range_end\n");
 
 	return ($range_begin, $range_end);
-}
-
-sub printRunTime($$) {
-	my $page_num		= shift;
-	my $loop_start_time	= shift;
-
-	my $loop_end_time = time();
-	my $loop_run_time = $loop_end_time - $loop_start_time;
-	printDebug($DBG_NONE,
-		sprintf("Run time for page $page_num: %02d:%02d:%02d\n",
-			int($loop_run_time/3600),
-			int(($loop_run_time % 3600) / 60),
-			int($loop_run_time % 60)));
-	printDebug($DBG_PROGRESS, "$env{'matches'} matches out of $env{'profiles'} profiles so far\n");
-}
-
-#
-# Loop through every page of Tree Conflicts....this can take days...
-#
-sub traverseTreeConflicts($$) {
-	my $range_begin = shift;
-	my $range_end   = shift;
-
-	($range_begin, $range_end) = rangeBeginEnd($range_begin, $range_end, "TREE_CONFLICTS");
-
-	for (my $i = $range_end; $i >= $range_begin; $i--) {
-		createDebugFH($i);
-	#$env{'log_file'}	= "$env{'logdir'}/logfile_" . dateHourMinuteSecond() . "_page_$page_num\.html";
-
-		my $loop_start_time = time();
-		my $page_profile_count = 0;
-		my $filename = "$env{'datadir'}/tree_conflicts_$i.html";
-		printDebug($DBG_PROGRESS, "Downloading Tree Conflicts list for page $i...\n");
-		getPage($filename, "http://www.geni.com/list/merge_issues?issue_type=&page=$i&order=merge_issue_date_modified&order_type=asc&group=&include_collaborators=true");
-
-		# Screen scrape this until geni is able to give us an API for our tree conflicts list
-		my @profiles_with_tree_conflicts;
-		open (INF,$filename);
-		while(<INF>) {
-# <a href="/people/Martha-BECK/6000000000252927371" class="linkTertiary" rel="friend">Martha Ann BECK</a> <span id="shared_icon_6000000000252927371" style="display:none;"><img alt="Icn_world" src="http://assets0.geni.com/images/icn_world.gif?1258076471" style="vertical-align:-3px;" title="Public Profile" /></span>
-# <a href="/people/Catherine-NUECHTER/6000000000252921711" class="linkTertiary" rel="friend">Catherine Elizabeth NUECHTER</a> <span id="shared_icon_6000000000252921711" style="display:none;"><img alt="Icn_world" src="http://assets0.geni.com/images/icn_world.gif?1258076471" style="vertical-align:-3px;" title="Public Profile" /></span>
-			if (/a href=\"\/people\/.*?\/(\d+)\" class.*Public Profile/) {
-				push @profiles_with_tree_conflicts, $1;
-			}
-		}
-		close INF;
-
-		foreach my $profile (@profiles_with_tree_conflicts) {
-			analyzeTreeConflict($profile);
-		}
-		printRunTime($i, $loop_start_time);
-		exit(); # dwalton - remove
-	} # End of range_begin/range_end for loop
-
-	printDebug($DBG_PROGRESS, "$env{'matches'} matches out of $env{'profiles'} profiles from page $range_begin to $range_end\n");
 }
 
 sub getJSON ($$) {
@@ -1323,36 +1304,67 @@ sub getJSON ($$) {
 	printDebug($DBG_JSON, sprintf ("Pretty JSON:\n%s", $json->pretty->encode($json_structure))); 
 	return $json_structure;
 }
+
+sub apiURL($$$) {
+	my $api_action	= shift;
+	my $direction	= shift;
+	my $page	= shift;
+	return sprintf("https://www.geni.com/api/profiles/%s?collaborators=true&order=last_modified_at&direction=%s&page=%s%s",
+			$api_action,
+			$direction,
+			$page,
+			$env{'all_of_geni'} ? "&all=true" : "");
+}
+
 #
-# Loop through every page of pending merges and analyze all
-# merges listed on each page. This can take days....
+# Loop through every page of a JSON list and analyze each profile,
+# merge, etc on each page. This can take days....
 #
-sub traversePendingMergePages($$) {
+sub traverseJSONPages($$$) {
 	my $range_begin	= shift;
 	my $range_end	= shift;
+	my $type	= shift;
 
-	($range_begin, $range_end) = rangeBeginEnd($range_begin, $range_end, "PENDING_MERGES");
+	if ($type ne "PENDING_MERGES" && $type ne "TREE_CONFLICTS") {
+		printDebug($DBG_PROGRESS, "ERROR: '$type' is an invalid traverseJSONPages option\n");
+		return 0;
+	}
 
-	my $filename = "$env{'datadir'}/merge_list_$range_end\.json";
-	my $url = sprintf("https://www.geni.com/api/profiles/merges?collaborators=true&order=last_modified_at&direction=asc&page=%s%s",
-				$range_end,
-				$env{'all_of_geni'} ? "&all=true" : "");
+	my $api_action;
+	if ($type eq "PENDING_MERGES") {
+		$api_action = "merges";
+
+	# Not supported yet (in progress)
+	} elsif ($type eq "TREE_CONFLICTS") {
+		$api_action = "tree_conflicts";
+
+	# Not supported yet
+	} elsif ($type eq "HOT_MATCHES") {
+		$api_action = "tree_matches";
+
+	# Not supported yet (probably won't implement this one)
+	} elsif ($type eq "DATA_CONFLICTS") {
+		$api_action = "data_conflicts";
+	}
+
+	($range_begin, $range_end) = rangeBeginEnd($range_begin, $range_end, $type, $api_action);
+	my $direction = "asc";
+	my $filename = "$env{'datadir'}/$api_action\_$range_end\.json";
+	my $url = apiURL($api_action, $direction, $range_end);
 	my $json_page = getJSON($filename, $url);
 	return 0 if (!$json_page);
 
-	my $next_url;
-
+	my $next_url = "";
 	while ($url ne "") {
 		$url =~ /page=(\d+)/;
 		my $page = $1;
 		if ($page - 1 >= $range_begin) {
-			$next_url = sprintf("https://www.geni.com/api/profiles/merges?collaborators=true&order=last_modified_at&direction=asc&page=%s%s",
-						$page - 1,
-						$env{'all_of_geni'} ? "&all=true" : "");
+			$next_url = apiURL($api_action, $direction, $page - 1);
 		} else {
 			$next_url = "";
 		}
 		$env{'log_file'} = "$env{'logdir'}/logfile_" . dateHourMinuteSecond() . "_page_$page\.html";
+		write_file($env{'log_file'}, "<pre>", 0);
 
 		my $loop_start_time = time();
 		my $page_profile_count = 0;
@@ -1361,17 +1373,32 @@ sub traversePendingMergePages($$) {
 		$url = $next_url;
 		next if (!$json_page);
 
-		foreach my $result (@{$json_page->{'results'}}) {
+		foreach my $json_list_entry (@{$json_page->{'results'}}) {
 			$env{'profiles'}++;
 			$page_profile_count++;
 			printDebug($DBG_PROGRESS, "Page $page/$range_end: Profile $page_profile_count: Overall Profile $env{'profiles'}\n");
-
-			if ($result->{'profiles'} =~ /\/(\d+),(\d+)$/) {
-				analyzePendingMerge($1, $2);
+		
+			if ($type eq "PENDING_MERGES") {
+				if ($json_list_entry->{'profiles'} =~ /\/(\d+),(\d+)$/) {
+					analyzePendingMerge($1, $2);
+				}
+			} elsif ($type eq "TREE_CONFLICTS") {
+			 	analyzeTreeConflict($json_list_entry->{'profile'},
+							$json_list_entry->{'actor'},
+							$json_list_entry->{'manager'},
+							$json_list_entry->{'issue_type'});
 			}
+
 			printDebug($DBG_NONE, "\n");
 		}
-		printRunTime($page, $loop_start_time);
+
+		my $loop_run_time = time() - $loop_start_time;
+		printDebug($DBG_NONE,
+			sprintf("Run time for page $page: %02d:%02d:%02d\n",
+				int($loop_run_time/3600),
+				int(($loop_run_time % 3600) / 60),
+			int($loop_run_time % 60)));
+		printDebug($DBG_PROGRESS, "$env{'matches'} matches out of $env{'profiles'} profiles so far\n");
 	}
 
 	printDebug($DBG_PROGRESS, "$env{'matches'} matches out of $env{'profiles'} profiles\n");
@@ -1404,17 +1431,6 @@ sub runTestCases() {
 	push @date_tests, "c. 1906:1900:0";
 	push @date_tests, "1/1/1900:1901:0";
 	push @date_tests, "c. 1/15/1785:1787:1";
-
-	# todo: fix this scenario
-	# For 6000000000234140489,6000000000234293794
-	#  http://www.geni.com/merge/compare/6000000000234140489?return=merge_center&to=6000000000234293794
-	# Husband is:
-	#  johannes stalknecht
-	# Wives are:
-	#  anna margaretha stalknecht
-	#  anna margaretha pretorius
-	#
-	# We need to pass the husband's last name when comparing two wives
 
 	my @name_tests;
 	push @name_tests, "female:Jane Smith ():Jane Doe ():0";
@@ -1508,12 +1524,12 @@ sub main() {
 		} elsif ($ARGV[$i] eq "-t" || $ARGV[$i] eq "-test") {
 			$env{'action'} = "test";
 
-		} elsif ($ARGV[$i] eq "-treeconflicts") {
+		} elsif ($ARGV[$i] eq "-tree_conflicts") {
 			$env{'action'} = "traverse_tree_conflicts";
 
-		} elsif ($ARGV[$i] eq "-tc" || $ARGV[$i] eq "-treeconflict") {
+		} elsif ($ARGV[$i] eq "-tc" || $ARGV[$i] eq "-tree_conflict") {
 			$left_id = $ARGV[++$i];
-			$env{'action'} = "treeconflict";
+			$env{'action'} = "tree_conflict";
 
 		} elsif ($ARGV[$i] eq "-rb") {
 			$range_begin = $ARGV[++$i];
@@ -1543,7 +1559,7 @@ sub main() {
 			printHelp();
 
 		} else { 
-			printDebug($DBG_NONE, "ERROR: '$ARGV[$i]' is not a supported arguement\n");
+			printDebug($DBG_PROGRESS, "ERROR: '$ARGV[$i]' is not a supported arguement\n");
 			printHelp();
 		}
 	}
@@ -1576,6 +1592,7 @@ sub main() {
 
 	(mkdir $env{'datadir'}, 0755) if !(-e $env{'datadir'});
 	(mkdir $env{'logdir'}, 0755) if !(-e $env{'logdir'});
+	write_file($env{'log_file'}, "<pre>", 0);
 
 	if ($env{'password'} eq "") {
 		if ($run_from_cgi) {
@@ -1590,7 +1607,7 @@ sub main() {
 	}
 
 	if ($env{'action'} eq "traverse_pending_merges") {
-		traversePendingMergePages($range_begin, $range_end);
+		traverseJSONPages($range_begin, $range_end, "PENDING_MERGES");
 
 	} elsif ($env{'action'} eq "pendingmerge") {
 		if (!$left_id || !$right_id) {
@@ -1601,15 +1618,16 @@ sub main() {
 		analyzePendingMerge($left_id, $right_id);
 
 	} elsif ($env{'action'} eq "traverse_tree_conflicts") {
-		traverseTreeConflicts($range_begin, $range_end);
+		traverseJSONPages($range_begin, $range_end, "TREE_CONFLICTS");
 
-	} elsif ($env{'action'} eq "treeconflict") {
+	} elsif ($env{'action'} eq "tree_conflict") {
 		if (!$left_id || $left_id !~ /^\d+$/) {
 			print STDERR "\nERROR: You must specify a profile ID, you entered '$left_id'\n";
 			exit();
 		}
 
-		analyzeTreeConflict($left_id);
+		analyzeTreeConflict($left_id, 0, 0, "parent");
+		analyzeTreeConflict($left_id, 0, 0, "partner");
 
 	} elsif ($env{'action'} eq "test") {
 		runTestCases();
