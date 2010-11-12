@@ -29,7 +29,7 @@ sub init(){
 	$env{'circa_range'}		= 5;
 	$env{'get_timeframe'}		= 10;
 	$env{'get_limit'}		= 18; # Amos has the limit set to 20 so we'll use 18 to have some breathing room
-	$env{'action'}			= "traverse_pending_merges";
+	$env{'action'}			= "pending_merges";
 
 	# environment
 	$env{'start_time'}		= time();
@@ -38,6 +38,7 @@ sub init(){
 	$env{'profiles'}		= 0;
 	$env{'merge_little_trees'}	= 0;
 	$env{'all_of_geni'}		= 0;
+	$env{'loop'}			= 0;
 
 	$debug{"file_" . $DBG_NONE}		= 1;
 	$debug{"file_" . $DBG_PROGRESS}		= 1;
@@ -89,19 +90,31 @@ sub init(){
 #
 sub printHelp() {
 	print STDERR "\ngeni-automerge.pl\n\n";
+	print STDERR "Required:\n";
 	print STDERR "-u \"user\@email.com\"\n";
-	print STDERR "-api_get_timeframe X: default is 10 seconds\n";
-	print STDERR "-api_get_limit X: default is 18 seconds\n";
-	print STDERR "-circa X (optional): X defines the number of +/- years for date matching.  5 is the default\n";
-	print STDERR "-rb X (optional): rb is short for -range_begin, X is the starting page\n";
-	print STDERR "-re X (optional): re is short for -range_end, X is the ending page\n";
-	print STDERR "-pm X Y: pm is short for -pendingmerge.  X and Y are the two profile IDs to merge\n";
-	print STDERR "-test: Sanity check the comparison functions\n";
-	print STDERR "-tree_conflicts: Analyze your list of Tree Conflicts\n";
-	print STDERR "-tree_conflict : Analyze profile X for Tree Conflicts\n";
-	print STDERR "-merge_little_trees: Enables mering a little tree into the big tree\n";
-	print STDERR "-h -help : print this menu\n\n";
+	print STDERR "-p \"password\"\n";
 	print STDERR "\n";
+	print STDERR "One of these is required:\n";
+	print STDERR "-pms   : Pending Merges - Analyze your entire list\n";
+	print STDERR "-pm X Y: Pending Merges - Analyze profile IDs X vs. Y\n";
+	print STDERR "-tcs   : Tree Conflicts - Analyze your entire list\n";
+	print STDERR "-tc X  : Tree Conflicts - Analyze profile ID X\n";
+#	print STDERR "-tms   : Tree Matches   - Analyze your entire list\n";
+#	print STDERR "-tm X  : Tree Matches   - Analyze profile ID X\n";
+#	print STDERR "-dcs   : Data Conflicts - Analyze your entire list\n";
+#	print STDERR "-dc X  : Data Conflicts - Analyze profile ID X\n";
+	print STDERR "\n";
+	print STDERR "Options for analyzing a list:\n";
+	print STDERR "-all : Include 'all of geni' pending merges, tree conflicts, etc\n";
+	print STDERR "-rb X: X is the starting page\n";
+	print STDERR "-re X: X is the ending page\n";
+	print STDERR "-loop: Start over at the first page when finished\n";
+	print STDERR "\n";
+	print STDERR "Misc Options:\n";
+	print STDERR "-mlt : Enables merging a little tree into the big tree\n";
+	print STDERR "-x   : Delete temp files in logs and script_data directories\n";
+	print STDERR "-c X : X defines the number of +/- years for date matching. 5 is the default\n";
+	print STDERR "-h   : print this menu\n\n";
 	exit(0);
 }
 
@@ -246,7 +259,9 @@ sub jsonSanityCheck($) {
 	}
 
 	# Some profiles are private and we cannot access them
-	return 0 if $json_data =~ /Access denied/i;
+	if ($json_data =~ /Access denied/i || $json_data =~ /SecurityError/i) {
+		return 0;
+	}
 
 	# I've only seen this once.  Not sure what the trigger is or if the
 	# sleep will fix it.
@@ -1137,6 +1152,17 @@ sub compareAllProfiles($$) {
 
 	return ($profile_count, $match_count);
 }
+
+# Finish this if/when we get an API for it
+sub checkPublic($) {
+	my $profile_id	= shift;
+	return if (!$profile_id);
+	geniLogin() if !$env{'logged_in'};
+
+	my $url = "http://www.geni.com/api/profiles/TBD........";
+	# $m->get($url);
+}
+
 sub analyzeTreeConflict($$$$) {
 	my $profile_id	= shift;
 	my $actor	= shift;
@@ -1250,6 +1276,19 @@ sub analyzePendingMerge($$) {
 	}
 }
 
+# Not supported yet
+sub analyzeTreeMatch($) {
+	my $id1			= shift;
+	printDebug($DBG_PROGRESS, "NOTE: Tree Match analysis is not supported yet\n");
+	exit();
+}
+
+# Not supported yet (probably won't implement this one)
+sub analyzeDataConflict($) {
+	my $id1			= shift;
+	printDebug($DBG_PROGRESS, "NOTE: Data Conflict analysis is not supported yet\n");
+	exit();
+}
 
 sub rangeBeginEnd($$$$) {
 	my $range_begin = shift;
@@ -1259,6 +1298,8 @@ sub rangeBeginEnd($$$$) {
 
 	my $filename = sprintf("%s/%s_count.json",
 				$env{'datadir'}, $api_action);
+	# Delete the file so we'll recalculate max_page everytime
+	unlink $filename;
 	my $url = sprintf("https://www.geni.com/api/profiles/%s?collaborators=true&count=true%s",
 			$api_action,
 			$env{'all_of_geni'} ? "&all=true" : "");
@@ -1287,8 +1328,8 @@ sub rangeBeginEnd($$$$) {
 }
 
 sub getJSON ($$) {
-	my $filename = shift;
-	my $url = shift;
+	my $filename	= shift;
+	my $url		= shift;
 
 	getPage($filename, $url);
 	if (jsonSanityCheck($filename) == 0) {
@@ -1325,24 +1366,16 @@ sub traverseJSONPages($$$) {
 	my $range_end	= shift;
 	my $type	= shift;
 
-	if ($type ne "PENDING_MERGES" && $type ne "TREE_CONFLICTS") {
-		printDebug($DBG_PROGRESS, "ERROR: '$type' is an invalid traverseJSONPages option\n");
-		return 0;
-	}
-
 	my $api_action;
 	if ($type eq "PENDING_MERGES") {
 		$api_action = "merges";
 
-	# Not supported yet (in progress)
 	} elsif ($type eq "TREE_CONFLICTS") {
 		$api_action = "tree_conflicts";
 
-	# Not supported yet
-	} elsif ($type eq "HOT_MATCHES") {
+	} elsif ($type eq "TREE_MATCHES") {
 		$api_action = "tree_matches";
 
-	# Not supported yet (probably won't implement this one)
 	} elsif ($type eq "DATA_CONFLICTS") {
 		$api_action = "data_conflicts";
 	}
@@ -1387,6 +1420,10 @@ sub traverseJSONPages($$$) {
 							$json_list_entry->{'actor'},
 							$json_list_entry->{'manager'},
 							$json_list_entry->{'issue_type'});
+			} elsif ($type eq "TREE_MATCHES") {
+				analyzeTreeMatch(0);
+			} elsif ($type eq "DATA_CONFLICTS") {
+				analyzeDataConflict(0);
 			}
 
 			printDebug($DBG_NONE, "\n");
@@ -1493,6 +1530,14 @@ sub runTestCases() {
 	print "\n";
 }
 
+sub validateProfileID($) {
+	my $profile_id = shift;
+	if (!$profile_id || $profile_id !~ /^\d+$/) {
+		print STDERR "\nERROR: You must specify a profile ID, you entered '$profile_id'\n";
+		exit();
+	}
+}
+
 sub main() {
 	$env{'username'}	= "";
 	$env{'password'}	= "";
@@ -1506,30 +1551,48 @@ sub main() {
 	# Parse all command line arguements
 	#
 	for (my $i = 0; $i <= $#ARGV; $i++) {
+
+		# Required
 		if ($ARGV[$i] eq "-u" || $ARGV[$i] eq "-username") {
 			$env{'username'} = $ARGV[++$i];
 
 		} elsif ($ARGV[$i] eq "-p" || $ARGV[$i] eq "-password") {
 			$env{'password'} = $ARGV[++$i];
 
-		} elsif ($ARGV[$i] eq "-c" || $ARGV[$i] eq "-circa") {
-			$env{'circa_range'} = $ARGV[++$i];
+		# At least of of these is required 
+		} elsif ($ARGV[$i] eq "-pms" || $ARGV[$i] eq "-pending_merges") {
+			$env{'action'} = "pending_merges";
 
-		} elsif ($ARGV[$i] eq "-pm" || $ARGV[$i] eq "-pendingmerge") {
+		} elsif ($ARGV[$i] eq "-pm" || $ARGV[$i] eq "-pending_merge") {
 			$left_id = $ARGV[++$i];
 			$right_id = $ARGV[++$i];
 			$debug{"file_" . $DBG_JSON} = 1;
-			$env{'action'} = "pendingmerge";
+			$env{'action'} = "pending_merge";
 
-		} elsif ($ARGV[$i] eq "-t" || $ARGV[$i] eq "-test") {
-			$env{'action'} = "test";
-
-		} elsif ($ARGV[$i] eq "-tree_conflicts") {
-			$env{'action'} = "traverse_tree_conflicts";
+		} elsif ($ARGV[$i] eq "-tcs" || $ARGV[$i] eq "-tree_conflicts") {
+			$env{'action'} = "tree_conflicts";
 
 		} elsif ($ARGV[$i] eq "-tc" || $ARGV[$i] eq "-tree_conflict") {
 			$left_id = $ARGV[++$i];
 			$env{'action'} = "tree_conflict";
+
+		} elsif ($ARGV[$i] eq "-tms" || $ARGV[$i] eq "-tree_matches") {
+			$env{'action'} = "tree_matches";
+
+		} elsif ($ARGV[$i] eq "-tm" || $ARGV[$i] eq "-tree_match") {
+			$env{'action'} = "tree_match";
+			$left_id = $ARGV[++$i];
+
+		} elsif ($ARGV[$i] eq "-dcs" || $ARGV[$i] eq "-data_conflicts") {
+			$env{'action'} = "data_conflicts";
+
+		} elsif ($ARGV[$i] eq "-dc" || $ARGV[$i] eq "-data_conflict") {
+			$env{'action'} = "data_conflict";
+			$left_id = $ARGV[++$i];
+
+		# Optional
+		} elsif ($ARGV[$i] eq "-all_of_geni") {
+			$env{'all_of_geni'} = 1;
 
 		} elsif ($ARGV[$i] eq "-rb") {
 			$range_begin = $ARGV[++$i];
@@ -1537,26 +1600,37 @@ sub main() {
 		} elsif ($ARGV[$i] eq "-re") {
 			$range_end = $ARGV[++$i];
 
-		} elsif ($ARGV[$i] eq "-run_from_cgi") {
-			$run_from_cgi = 1;
+		} elsif ($ARGV[$i] eq "-loop") {
+			$env{'loop'} = 1;
 
-		} elsif ($ARGV[$i] eq "-merge_little_trees") {
+		} elsif ($ARGV[$i] eq "-mlt" || $ARGV[$i] eq "-merge_little_trees") {
 			$env{'merge_little_trees'} = 1;
 
-		} elsif ($ARGV[$i] eq "-all_of_geni") {
-			$env{'all_of_geni'} = 1;
+		} elsif ($ARGV[$i] eq "-x") {
+			$env{'delete'} = 1;
 
+		} elsif ($ARGV[$i] eq "-c" || $ARGV[$i] eq "-circa") {
+			$env{'circa_range'} = $ARGV[++$i];
+
+		} elsif ($ARGV[$i] eq "-h" || $ARGV[$i] eq "-help") {
+			printHelp();
+
+		# Developer options, these are not listed in the help menu
 		} elsif ($ARGV[$i] eq "-api_get_timeframe") {
 			$env{'get_timeframe'} = $ARGV[++$i];
 
 		} elsif ($ARGV[$i] eq "-api_get_limit") {
 			$env{'get_limit'} = $ARGV[++$i];
 
-		} elsif ($ARGV[$i] eq "-x") {
-			$env{'delete'} = 1;
+		} elsif ($ARGV[$i] eq "-t" || $ARGV[$i] eq "-test") {
+			$env{'action'} = "test";
 
-		} elsif ($ARGV[$i] eq "-h" || $ARGV[$i] eq "-help") {
-			printHelp();
+		} elsif ($ARGV[$i] eq "-run_from_cgi") {
+			$run_from_cgi = 1;
+
+		} elsif ($ARGV[$i] eq "-cp" || $ARGV[$i] eq "-check_public") {
+			$env{'action'} = "check_public";
+			$left_id = $ARGV[++$i];
 
 		} else { 
 			printDebug($DBG_PROGRESS, "ERROR: '$ARGV[$i]' is not a supported arguement\n");
@@ -1606,28 +1680,58 @@ sub main() {
 		}
 	}
 
-	if ($env{'action'} eq "traverse_pending_merges") {
-		traverseJSONPages($range_begin, $range_end, "PENDING_MERGES");
+	if ($env{'action'} eq "pending_merges") {
+		do {
+			traverseJSONPages($range_begin, $range_end, "PENDING_MERGES");
+			system "rm -rf $env{'datadir'}/*" if ($env{'loop'});
+		} while ($env{'loop'});
 
-	} elsif ($env{'action'} eq "pendingmerge") {
+	} elsif ($env{'action'} eq "pending_merge") {
 		if (!$left_id || !$right_id) {
 			print STDERR "\nERROR: You must specify two profile IDs, you only specified one\n";
 			exit();
 		}
-
+		validateProfileID($left_id);
+		validateProfileID($right_id);
 		analyzePendingMerge($left_id, $right_id);
 
-	} elsif ($env{'action'} eq "traverse_tree_conflicts") {
-		traverseJSONPages($range_begin, $range_end, "TREE_CONFLICTS");
+	} elsif ($env{'action'} eq "tree_conflicts") {
+		do {
+			traverseJSONPages($range_begin, $range_end, "TREE_CONFLICTS");
+			system "rm -rf $env{'datadir'}/*" if ($env{'loop'});
+		} while ($env{'loop'});
 
 	} elsif ($env{'action'} eq "tree_conflict") {
-		if (!$left_id || $left_id !~ /^\d+$/) {
-			print STDERR "\nERROR: You must specify a profile ID, you entered '$left_id'\n";
-			exit();
-		}
-
+		validateProfileID($left_id);
 		analyzeTreeConflict($left_id, 0, 0, "parent");
 		analyzeTreeConflict($left_id, 0, 0, "partner");
+
+	} elsif ($env{'action'} eq "tree_matches") {
+		printDebug($DBG_PROGRESS, "NOTE: The -all option is not supported for Tree Matches\n") if $env{'all_of_geni'};
+		$env{'all_of_geni'} = 0;
+
+		do {
+			traverseJSONPages($range_begin, $range_end, "TREE_MATCHES");
+			system "rm -rf $env{'datadir'}/*" if ($env{'loop'});
+		} while ($env{'loop'});
+
+	} elsif ($env{'action'} eq "tree_match") {
+		validateProfileID($left_id);
+		analyzeTreeMatch($left_id);
+
+	} elsif ($env{'action'} eq "data_conflicts") {
+		do {
+			traverseJSONPages($range_begin, $range_end, "DATA_CONFLICTS");
+			system "rm -rf $env{'datadir'}/*" if ($env{'loop'});
+		} while ($env{'loop'});
+
+	} elsif ($env{'action'} eq "data_conflict") {
+		validateProfileID($left_id);
+		analyzeDataConflict($left_id);
+
+	} elsif ($env{'action'} eq "check_public") {
+		validateProfileID($left_id);
+		checkPublic($left_id);
 
 	} elsif ($env{'action'} eq "test") {
 		runTestCases();
