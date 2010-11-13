@@ -40,6 +40,7 @@ sub init(){
 	$env{'all_of_geni'}		= 0;
 	$env{'loop'}			= 0;
 	$env{'direction'}		= "asc"; # Must be asc or desc
+	$env{'delete_files'}		= 1;
 
 	$debug{"file_" . $DBG_NONE}		= 1;
 	$debug{"file_" . $DBG_PROGRESS}		= 1;
@@ -261,6 +262,7 @@ sub jsonSanityCheck($) {
 
 	# Some profiles are private and we cannot access them
 	if ($json_data =~ /Access denied/i || $json_data =~ /SecurityError/i) {
+		printDebug($DBG_NONE, "NOTICE: Private profile in '$filename'\n");
 		return 0;
 	}
 
@@ -363,10 +365,16 @@ sub sleepIfNeeded() {
 	if ($gets_in_api_timeframe >= $env{'get_limit'}) {
 		# index is the timestamp entry that needs to expire before we can do another get
 		my $index = $gets_in_api_timeframe - $env{'get_limit'};
-		my $new_to_old_delta = roundup(timestampDelta($time_current, $get_history[$index])/1000000);
+		my $new_to_old_delta = int(timestampDelta($time_current, $get_history[$index])/1000000);
 		my $sleep_length = $env{'get_timeframe'} - $new_to_old_delta;
-		printDebug($DBG_NONE,
-			"$gets_in_api_timeframe gets() in the past $env{'get_timeframe'} seconds....sleeping for $sleep_length seconds\n");
+
+		if (!$sleep_length) {
+			printDebug($DBG_PROGRESS, "ERROR: sleep_length was 0.  Using $env{'get_timeframe'} instead\n");
+			$sleep_length = $env{'get_timeframe'};
+		}
+		printDebug($DBG_PROGRESS,
+			sprintf("%d gets() in the past %d seconds....sleeping for %d second%s\n",
+				$gets_in_api_timeframe, $env{'get_timeframe'}, $sleep_length, $sleep_length > 1 ? "s" : ""));
 		sleep($sleep_length);
 	}
 }
@@ -535,6 +543,13 @@ sub cleanupNameGuts($) {
 		$name = $` . " " . $';
 	}
 
+
+	# Treat the I in "Edgar I of England" differently from "Robert I. Smith"
+	# We want to remember the I/V/X that are abbreviations but remove the others.
+	$name =~ s/I\./ INITIAL_I /g;
+	$name =~ s/V\./ INITIAL_V /g;
+	$name =~ s/X\./ INITIAL_X /g;
+
 	# Remove punctuation
 	$name =~ s/ d\'/ /g;
 	$name =~ s/\./ /g;
@@ -558,7 +573,7 @@ sub cleanupNameGuts($) {
 				"lord", "duke", "earl", "prince", "princess", "king", "queen", "baron",
 				"csa", "general", "gen", "president", "pres", "countess", "lieutenant", "lt",
 				"captain", "chief justice", "honorable", "hon",
-				"ii", "iii", "iv", "vi", "vii", "viii", "iix", "ix",
+				"i", "ii", "iii", "iv", "v", "vi", "vii", "viii", "ix", "x", "xi", "xii", "xiii",
 				"sir", "knight", "reverend", "rev", "count", "ct", "cnt", "sheriff",
 				"jr", "sr", "junior", "senior");
 	foreach my $rm_string (@strings_to_remove) {
@@ -572,6 +587,10 @@ sub cleanupNameGuts($) {
 			$name = $` . " " . $';
 		}
 	}
+
+	$name =~ s/ INITIAL_I / I /g;
+	$name =~ s/ INITIAL_V / V /g;
+	$name =~ s/ INITIAL_X / X /g;
 
 	# Remove double (or more) whitespaces
 	while ($name =~ /\s\s/) {
@@ -934,10 +953,9 @@ sub mergeURLHTML($$) {
 	return "<a href=\"http://www.geni.com/merge/compare/$id1?return=merge_center&to=$id2\">http://www.geni.com/merge/compare/$id1?return=merge_center&to=$id2</a>";
 }
 
-sub compareProfiles($$$) {
+sub compareProfiles($$) {
 	my $id1			= shift;
 	my $id2			= shift;
-	my $delete_file		= shift;
 	my $id1_url = "<a href=\"http://www.geni.com/people/id/$id1\">$id1</a>";
 	my $id2_url = "<a href=\"http://www.geni.com/people/id/$id2\">$id2</a>";
 
@@ -958,7 +976,7 @@ sub compareProfiles($$$) {
 			printDebug($DBG_NONE,
 				sprintf("NO_MATCH: %s is not on the big tree\n",
 					($geni_profile == $left_profile) ? $id1_url : $id2_url));
-			unlink $filename if $delete_file;
+			unlink $filename if $env{'delete_files'};
 			return 0;
 		}
 
@@ -970,7 +988,7 @@ sub compareProfiles($$$) {
 				sprintf("NO_MATCH: %s has a curator note '%s'\n",
 					($geni_profile == $left_profile) ? $id1_url : $id2_url,
 					$json_profile->{'focus'}->{'merge_note'}));
-			unlink $filename if $delete_file;
+			unlink $filename if $env{'delete_files'};
 			return 0;
 		}
 
@@ -990,7 +1008,7 @@ sub compareProfiles($$$) {
 					sprintf("NO_MATCH: %s is managed by blacklist user %s\n",
 						($geni_profile == $left_profile) ? $id1_url : $id2_url,
 						"<a href=\"http://www.geni.com/people/id/$profile_id/\">$profile_id</a>\n"));
-				unlink $filename if $delete_file;
+				unlink $filename if $env{'delete_files'};
 				return 0;
 			}
 		}
@@ -1063,9 +1081,7 @@ sub compareProfiles($$$) {
 		$geni_profile = $right_profile;
 	}
 
-	# It would be nice to keep the files around for caching purposes but the
-	# volume of files gets out of hand (30k+ in 24 hours) pretty quickly.
-	unlink $filename if $delete_file;
+	unlink $filename if $env{'delete_files'};
 
 	# This is a big safety net in case in case the API somehow were to
 	# return a different merge comparison than what we asked for
@@ -1138,7 +1154,7 @@ sub compareAllProfiles($$) {
 		for (my $j = $i + 1; $j <= $#profiles_array; $j++) {
 			(my $j_id, my $j_name, my $gender) = split(/:/, $profiles_array[$j]);
 			if (compareNames($gender, $i_name, $j_name, 0)) {
-				if (compareProfiles($i_id, $j_id, 1)) {
+				if (compareProfiles($i_id, $j_id)) {
 					printDebug($DBG_PROGRESS, "TREE_CONFLICT_COMPARE: $text\[$i] $i_name vs. $text\[$j] $j_name - MATCH\n");
 					mergeProfiles("https://www.geni.com/api/profiles/merge/$i_id,$j_id", $i_id, $j_id, "TREE_CONFLICT");
 					$match_count++;
@@ -1269,14 +1285,14 @@ sub analyzeTreeConflict($$) {
 	($a, $b) = compareAllProfiles("Sisters", \@sisters); $profile_count += $a; $match_count += $b;
 	printDebug($DBG_PROGRESS, "Matched $match_count/$profile_count\n");
 
-	unlink $filename;
+	unlink $filename if $env{'delete_files'};
 }
 
 sub analyzePendingMerge($$) {
 	my $id1			= shift;
 	my $id2			= shift;
 
-	if (compareProfiles($id1, $id2, 1)) {
+	if (compareProfiles($id1, $id2)) {
 		mergeProfiles("https://www.geni.com/api/profiles/merge/$id1,$id2", $id1, $id2, "PENDING_MERGE");
 	}
 }
@@ -1338,7 +1354,7 @@ sub getJSON ($$) {
 
 	getPage($filename, $url);
 	if (jsonSanityCheck($filename) == 0) {
-		unlink $filename;
+		unlink $filename if $env{'delete_files'};
 		return 0;
 	}
 	open (INF,$filename);
@@ -1600,7 +1616,7 @@ sub main() {
 			$left_id = $ARGV[++$i];
 
 		# Optional
-		} elsif ($ARGV[$i] eq "-all_of_geni") {
+		} elsif ($ARGV[$i] eq "-all" || $ARGV[$i] eq "-all_of_geni") {
 			$env{'all_of_geni'} = 1;
 
 		} elsif ($ARGV[$i] eq "-rb") {
@@ -1770,14 +1786,10 @@ __END__
 46,805,758 big tree profiles on 10/29/2010
 
 TODO
-- write wiki
+- test the new check_public API
+	- if we check_public and it fails store that in a file somewhere so we don't do it over and over
+- test half-siblings once they fix this in the API
 - 6000000007224268070 vs 6000000003243493709 has a profile with the birthdate as part of the name
   We could fix this.
 	-cleanupName  pre-clean: Samuel Seabury b. 10 Dec 1640
 	-cleanupName post-clean: samuel seabury b dec 1640
-
-New API calls on the way:
-/api/profiles/tree_conflicts
-/api/profiles/data_conflicts
-/api/profiles/tree_matches
-
