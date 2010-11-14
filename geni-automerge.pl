@@ -553,6 +553,8 @@ sub cleanupNameGuts($) {
 	# Remove punctuation
 	$name =~ s/ d\'/ /g;
 	$name =~ s/\./ /g;
+	$name =~ s/\*/ /g;
+	$name =~ s/\~/ /g;
 	$name =~ s/\:/ /g;
 	$name =~ s/\,/ /g;
 	$name =~ s/\'/ /g;
@@ -717,7 +719,10 @@ sub compareNames($$$$) {
 	my $debug	= shift;
 
 	if ($left_name eq $right_name) {
-		printDebug($DBG_NONE, sprintf("MATCH Whole Name: left '%s' , right '%s'\n", $left_name, $right_name)) if $debug;
+		printDebug($DBG_NONE,
+			sprintf("MATCH Whole Name: left '%s' vs. right '%s'\n",
+				$left_name,
+				$right_name)) if $debug;
 		return 1;
 	}
 
@@ -734,20 +739,23 @@ sub compareNames($$$$) {
 		$left_name = $`;
 	}
 
-	if ($left_name =~ /^(\w+)\s(\w+)\s(\w+)$/) {
+	if ($left_name =~ /^(.*?)\s(.*?)\s(.*?)$/) {
 		$left_name_first = $1;
 		$left_name_middle = $2;
 		$left_name_last= $3;
-	} elsif ($left_name =~ /^(\w+)\s(\w+)$/) {
+	} elsif ($left_name =~ /^(.*?)\s(.*?)$/) {
 		$left_name_first = $1;
 		$left_name_last= $2;
-	} elsif ($left_name =~ /^(\w+)$/) {
+	} elsif ($left_name =~ /^(.*?)$/) {
 		$left_name_first = $1;
 	# This will happen when the profile has multiple middle names
-	} elsif ($left_name =~ /^(\w+)\s(.*)\s(\w+)$/) {
+	} elsif ($left_name =~ /^(.*?)\s(.*)\s(.*?)$/) {
 		$left_name_first = $1;
 		$left_name_middle = $2;
 		$left_name_last= $3;
+	# This should not happen
+	} else {
+		$left_name_first = $left_name;
 	}
 
 	my $right_name_first	= "";
@@ -760,20 +768,23 @@ sub compareNames($$$$) {
 		$right_name = $`;
 	}
 
-	if ($right_name =~ /^(\w+)\s(\w+)\s(\w+)$/) {
+	if ($right_name =~ /^(.*?)\s(.*?)\s(.*?)$/) {
 		$right_name_first = $1;
 		$right_name_middle = $2;
 		$right_name_last= $3;
-	} elsif ($right_name =~ /^(\w+)\s(\w+)$/) {
+	} elsif ($right_name =~ /^(.*?)\s(.*?)$/) {
 		$right_name_first = $1;
 		$right_name_last= $2;
-	} elsif ($right_name =~ /^(\w+)$/) {
+	} elsif ($right_name =~ /^(.*?)$/) {
 		$right_name_first = $1;
 	# This will happen when the profile has multiple middle names
-	} elsif ($right_name =~ /^(\w+)\s(.*)\s(\w+)$/) {
+	} elsif ($right_name =~ /^(.*?)\s(.*)\s(.*?)$/) {
 		$right_name_first = $1;
 		$right_name_middle = $2;
 		$right_name_last= $3;
+	# This should not happen
+	} else {
+		$right_name_first = $right_name;
 	}
 
 	my $first_name_matches = compareNamesGuts(1, $left_name_first, $right_name_first);
@@ -789,13 +800,38 @@ sub compareNames($$$$) {
 		$last_name_matches = compareNamesGuts(0, $left_name_last, $right_name_last);
 	}
 
-	printDebug($DBG_NONE, sprintf("%sMATCH First Name: left '%s' , right '%s'\n", ($first_name_matches) ? "" : "NO_", $left_name_first, $right_name_first)) if $debug;
-	printDebug($DBG_NONE, sprintf("%sMATCH Middle Name: left '%s' , right '%s'\n", ($middle_name_matches) ? "" : "NO_", $left_name_middle, $right_name_middle)) if $debug;
+	printDebug($DBG_NONE,
+		sprintf("%sMATCH First Name: left '%s' vs. right '%s'\n",
+			($first_name_matches) ? "" : "NO_",
+			$left_name_first,
+			$right_name_first)) if $debug;
+	printDebug($DBG_NONE,
+		sprintf("%sMATCH Middle Name: left '%s' vs. right '%s'\n",
+			($middle_name_matches) ? "" : "NO_",
+			$left_name_middle,
+			$right_name_middle)) if $debug;
 
 	if ($gender eq "female") {
-		printDebug($DBG_NONE, sprintf("%sMATCH Last Name: left '%s (%s)' , right '%s (%s)'\n", ($last_name_matches) ? "" : "NO_", $left_name_last, $left_name_maiden, $right_name_last, $right_name_maiden)) if $debug;
+		printDebug($DBG_NONE,
+			sprintf("%sMATCH Last Name: left '%s (%s)' vs. right '%s (%s)'\n",
+				($last_name_matches) ? "" : "NO_",
+				$left_name_last,
+				$left_name_maiden,
+				$right_name_last,
+				$right_name_maiden)) if $debug;
 	} else {
-		printDebug($DBG_NONE, sprintf("%sMATCH Last Name: left '%s' , right '%s'\n", ($last_name_matches) ? "" : "NO_", $left_name_last, $right_name_last)) if $debug;
+		printDebug($DBG_NONE,
+			sprintf("%sMATCH Last Name: left '%s' vs. right '%s'\n",
+				($last_name_matches) ? "" : "NO_",
+				$left_name_last,
+				$right_name_last)) if $debug;
+	}
+
+	# This should never happen but just to be safe return false if everything is blank
+	if (!$left_name_first && !$left_name_middle && !$left_name_last && !$left_name_maiden &&
+	    !$right_name_first && !$right_name_middle && !$right_name_last && !$right_name_maiden) {
+		printDebug($DBG_PROGRESS, "ERROR: compareNames all names were blank\n");
+		return 0;
 	}
 
 	return ($first_name_matches && $middle_name_matches && $last_name_matches);
@@ -1591,7 +1627,6 @@ sub main() {
 		} elsif ($ARGV[$i] eq "-pm" || $ARGV[$i] eq "-pending_merge") {
 			$left_id = $ARGV[++$i];
 			$right_id = $ARGV[++$i];
-			$debug{"file_" . $DBG_JSON} = 1;
 			$env{'action'} = "pending_merge";
 
 		} elsif ($ARGV[$i] eq "-tcs" || $ARGV[$i] eq "-tree_conflicts") {
