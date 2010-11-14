@@ -1,0 +1,24 @@
+#!/usr/bin/perl
+#
+# An unit test for the geni-automerge script.
+#
+# Usage: ./unit_test - for listing all the tests with results.
+#        prove unit_test - for a shorter output.
+#
+use strict;
+use Test::Builder;
+
+our $CALLED_BY_TEST_SCRIPT = 1;
+
+require "geni-automerge.pl";
+
+my $Test = Test::Builder->new;
+
+init();
+
+$Test->ok(yearInRange("1200", "1200", 0), "identical years");
+$Test->ok(!yearInRange("1200", "1201", 0), "Adjacent no circa");
+$Test->ok(yearInRange("1200", "1201", 1), "Adjacent with circa");
+
+
+$Test->done_testing();

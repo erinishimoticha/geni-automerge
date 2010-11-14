@@ -21,8 +21,12 @@ my $DBG_JSON			= "DBG_JSON";
 my $DBG_MATCH_DATE		= "DBG_MATCH_DATE";
 my $DBG_MATCH_BASIC		= "DBG_MATCH_BASIC";
 
-init();
-main();
+our $CALLED_BY_TEST_SCRIPT;
+
+if (!$CALLED_BY_TEST_SCRIPT) {
+    init();
+    main();
+}
 
 sub init(){
 	# configuration
@@ -1816,6 +1820,8 @@ sub main() {
 			int($run_time % 60)));
 
 }
+
+1;
 
 __END__
 46,805,758 big tree profiles on 10/29/2010
