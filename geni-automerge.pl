@@ -8,6 +8,9 @@ use Time::HiRes;
 use JSON;
 # http://search.cpan.org/~maurice/Text-DoubleMetaphone-0.07/DoubleMetaphone.pm
 use Text::DoubleMetaphone qw( double_metaphone );
+# Since we use HTTPS, must have support for it. This makes it easy to understand
+# what's wrong if it's not installed.
+use IO::Socket::SSL;
 
 # globals and constants
 my (%env, %debug, %blacklist_managers, @get_history);
@@ -225,8 +228,8 @@ sub geniLogin() {
 	}
 
 	$m->cookie_jar(HTTP::Cookies->new());
-	$m->get("https://www.geni.com/login");
-	$m->form_number(3);
+	$m->get("https://www.geni.com/login") || die "Get login page failed";
+	$m->form_number(3) || die "Did not find login form on login page\n";
 	$m->field("profile[username]" => $env{'username'});
 	$m->field("profile[password]" => $env{'password'});
 	$m->click();
@@ -247,7 +250,7 @@ sub geniLogin() {
 sub geniLogout() {
 	return if !$env{'logged_in'};
 	printDebug($DBG_PROGRESS, "Logging out of www.geni.com\n");
-	$m->get("http://www.geni.com/logout?ref=ph");
+	$m->get("http://www.geni.com/logout?ref=ph") || die "Logout failed";
 }
 
 sub jsonSanityCheck($) {
@@ -395,7 +398,7 @@ sub getPage($$) {
 	geniLogin() if !$env{'logged_in'};
 	printDebug($DBG_IO, "getPage(fetch): $url\n");
 	sleepIfNeeded();
-	$m->get($url);
+	$m->get($url) || die "getPage($url) failed";
 	write_file($filename, $m->content(), 0);
 	updateGetHistory();
 }
