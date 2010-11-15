@@ -1323,6 +1323,9 @@ sub analyzeTreeConflict($$) {
 	($a, $b) = compareAllProfiles("Father", \@fathers); $profile_count += $a; $match_count += $b;
 	($a, $b) = compareAllProfiles("Mother", \@mothers); $profile_count += $a; $match_count += $b;
 	($a, $b) = compareAllProfiles("Spouse", \@spouses); $profile_count += $a; $match_count += $b;
+
+	# todo: need a better way to handle this if the profiles we're comparing have spouses.
+	# We could go back to +- 5 for those cases.
 	$env{'circa_range'} = 1;
 	($a, $b) = compareAllProfiles("Sons", \@sons); $profile_count += $a; $match_count += $b;
 	($a, $b) = compareAllProfiles("Daughters", \@daughters); $profile_count += $a; $match_count += $b;
