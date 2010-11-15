@@ -8,6 +8,7 @@ use Time::HiRes;
 use JSON;
 # http://search.cpan.org/~maurice/Text-DoubleMetaphone-0.07/DoubleMetaphone.pm
 use Text::DoubleMetaphone qw( double_metaphone );
+use HTTP::Response;
 
 # globals and constants
 my (%env, %debug, %blacklist_managers, @get_history);
@@ -99,8 +100,10 @@ sub printHelp() {
 	print STDERR "One of these is required:\n";
 	print STDERR "-pms   : Pending Merges - Analyze your entire list\n";
 	print STDERR "-pm X Y: Pending Merges - Analyze profile IDs X vs. Y\n";
+#	print STDERR "-pmfg X: Pending Merges - Analyze for the family-group of profile ID X\n";
 	print STDERR "-tcs   : Tree Conflicts - Analyze your entire list\n";
 	print STDERR "-tc X  : Tree Conflicts - Analyze profile ID X\n";
+#	print STDERR "-tcfg X: Tree Conflicts - Analyze for the family-group of profile ID X\n";
 #	print STDERR "-tms   : Tree Matches   - Analyze your entire list\n";
 #	print STDERR "-tm X  : Tree Matches   - Analyze profile ID X\n";
 #	print STDERR "-dcs   : Data Conflicts - Analyze your entire list\n";
@@ -115,7 +118,6 @@ sub printHelp() {
 	print STDERR "Misc Options:\n";
 	print STDERR "-mlt : Enables merging a little tree into the big tree\n";
 	print STDERR "-x   : Delete temp files in logs and script_data directories\n";
-	print STDERR "-c X : X defines the number of +/- years for date matching. 5 is the default\n";
 	print STDERR "-h   : print this menu\n\n";
 	exit(0);
 }
@@ -189,23 +191,6 @@ sub todaysDate() {
 	return "$year\_$mon\_$mday";
 }
 
-# todo: get this working, geni keeps changing the web form that we currently use to login
-sub geniLoginAPI() {
-	if (!$env{'username'}) {
-		print STDERR "\nERROR: username is blank.  You must specify your geni username via '-u username'\n";
-		exit();
-	}
-
-	if (!$env{'password'}) {
-		print STDERR "\nERROR: password is blank.  You must specify your geni password via '-p password'\n";
-		exit();
-	}
-
-	$env{'logged_in'} = 1;
-	$m->cookie_jar(HTTP::Cookies->new());
-	$m->post("https://www.geni.com/login/in&username=$env{'username'}&password=$env{'password'}");
-}
-
 #
 # Do a secure login into geni
 #
@@ -221,14 +206,10 @@ sub geniLogin() {
 	}
 
 	$m->cookie_jar(HTTP::Cookies->new());
-	$m->get("https://www.geni.com/login");
-	$m->form_number(3);
-	$m->field("profile[username]" => $env{'username'});
-	$m->field("profile[password]" => $env{'password'});
-	$m->click();
-	
-	my $output = $m->content();
-	if ($output =~ /Welcome to Geni/i) {
+	my $result = new HTTP::Response;
+	$result = $m->post("https://www.geni.com/login/in?username=$env{'username'}&password=$env{'password'}");
+
+	if (!$result->is_success || $result->decoded_content =~ /Welcome to Geni/i) {
 		printDebug($DBG_PROGRESS, "ERROR: Login FAILED for www.geni.com!!\n");
 		exit();
 	}
@@ -242,7 +223,7 @@ sub geniLogin() {
 #
 sub geniLogout() {
 	return if !$env{'logged_in'};
-	printDebug($DBG_PROGRESS, "Logging out of www.geni.com\n");
+	printDebug($DBG_PROGRESS, "\nLogging out of www.geni.com\n");
 	$m->get("http://www.geni.com/logout?ref=ph");
 }
 
@@ -269,6 +250,13 @@ sub jsonSanityCheck($) {
 	# I've only seen this once.  Not sure what the trigger is or if the
 	# sleep will fix it.
 	if ($json_data =~ /500 read timeout/i) {
+		printDebug($DBG_PROGRESS, "NOTICE: 500 read timeout in '$filename'\n");
+		sleep(10);
+		return 0;
+	}
+
+	if ($json_data =~ /apiexception/i) {
+		printDebug($DBG_PROGRESS, "NOTICE: API Exception in '$filename'\n");
 		sleep(10);
 		return 0;
 	}
@@ -397,16 +385,18 @@ sub getPage($$) {
 }
 
 #
-# Return TRUE if year1 or year2 were marked with circa and fall within +/- 5 years of each other.
+# Return TRUE if number1 or number2 were marked with circa and fall within +/- circa_range of each other.
 # Else only return TRUE if they match exactly
 #
-sub yearInRange($$$) {
-	my $year1 = shift;
-	my $year2 = shift;
+sub numbersInRange($$$$) {
+	my $number1 = shift;
+	my $number2 = shift;
 	my $circa = shift;
+	my $circa_range = shift;
 
-	return (abs(($year1) - ($year2)) <= $env{'circa_range'} ? $env{'circa_range'} : 0) if $circa;
-	return ($year1 == $year2); 
+	return 1 if ((!$number1 && $number2) || ($number1 && !$number2));
+	return (abs(($number1) - ($number2)) <= $circa_range ? 1 : 0) if $circa;
+	return ($number1 == $number2); 
 }
 
 sub monthDayYear($) {
@@ -489,12 +479,15 @@ sub dateMatches($$) {
 	($date1_month, $date1_day, $date1_year) = monthDayYear($date1);
 	($date2_month, $date2_day, $date2_year) = monthDayYear($date2);
 
-	# If the year is pre 1750 then assume circa.  If you don't do this there are too many dates that
+	# If the year is pre 1800 then assume circa.  If you don't do this there are too many dates that
 	# are off by a year or two that never match
-	if (($date1_year && $date1_year <= 1750) ||
-		($date2_year && $date2_year <= 1750)) {
+	if (($date1_year && $date1_year <= 1800) ||
+		($date2_year && $date2_year <= 1800)) {
 		$circa = 1;
 	}
+
+	my $day_circa_range = 31;
+	my $day_circa = (($date1_year && $date1_year <= 1900) || ($date2_year && $date2_year <= 1900));
 
 #	printDebug($DBG_MATCH_DATE, "\n date1_month: $date1_month\n");
 #	printDebug($DBG_MATCH_DATE, " date1_day  : $date1_day\n");
@@ -504,11 +497,10 @@ sub dateMatches($$) {
 #	printDebug($DBG_MATCH_DATE, " date2_year : $date2_year\n");
 #	printDebug($DBG_MATCH_DATE, " circa      : $circa\n\n");
 
-	if (yearInRange($date1_year, $date2_year, $circa)) {
+	if (numbersInRange($date1_year, $date2_year, $circa, $env{'circa_range'})) {
 		if (($date1_month && $date2_month && $date1_month == $date2_month) || 
 			(!$date1_month || !$date2_month)) {
-			if (($date1_day && $date2_day && $date1_day == $date2_day) ||
-				(!$date1_day || !$date2_day)) {
+			if (numbersInRange($date1_day, $date2_day, $day_circa, $day_circa_range)) { 
 				printDebug($DBG_MATCH_DATE, "MATCH: $debug_string");
 				return 1;
 			}
@@ -553,6 +545,7 @@ sub cleanupNameGuts($) {
 	# Remove punctuation
 	$name =~ s/ d\'/ /g;
 	$name =~ s/\./ /g;
+	$name =~ s/\?/ /g;
 	$name =~ s/\*/ /g;
 	$name =~ s/\~/ /g;
 	$name =~ s/\:/ /g;
@@ -574,7 +567,7 @@ sub cleanupNameGuts($) {
 				"daughter", "dau", "wife", "mr", "mrs", "miss", "duchess",
 				"lord", "duke", "earl", "prince", "princess", "king", "queen", "baron",
 				"csa", "general", "gen", "president", "pres", "countess", "lieutenant", "lt",
-				"captain", "chief justice", "honorable", "hon",
+				"capt", "captain", "chief justice", "honorable", "hon", "col", "dr", "colonel",
 				"i", "ii", "iii", "iv", "v", "vi", "vii", "viii", "ix", "x", "xi", "xii", "xiii",
 				"sir", "knight", "reverend", "rev", "count", "ct", "cnt", "sheriff",
 				"jr", "sr", "junior", "senior");
@@ -706,8 +699,26 @@ sub compareNamesGuts($$$) {
 	return 1 if $left_name && !$right_name;
 	return 1 if !$left_name && $right_name;
 	return 1 if $left_name eq $right_name;
-	return 1 if $compare_initials && initialVsWholeMatch($left_name, $right_name);
-	return 1 if doubleMetaphoneCompare($left_name, $right_name);
+
+	# This can only happen if we're looking at a profile with multiple middle names.
+	# If that is the case then don't consider "R. vs. Robert" a match.  The reason
+	# being there could be 5 middle names and it would be too easy for one of them 
+	# to match an initial.
+	if ($left_name =~ /\s/ || $right_name =~ /\s/) {
+		$compare_initials = 0;
+	}
+
+	# Again, this only happens for multiple middle names.  We compare all the middle
+	# names from the left profile with the middle names from the right profile. If
+	# one of them matches return true. This is designed for cases like this:
+	# 'sarah dabney taylor (strother)' vs. right 'sarah pannill dabney taylor (strother)'
+	foreach my $left_name_component (split(/\s/, $left_name)) {
+		foreach my $right_name_component (split(/\s/, $right_name)) {
+			return 1 if $left_name_component eq $right_name_component;
+			return 1 if $compare_initials && initialVsWholeMatch($left_name_component, $right_name_component);
+			return 1 if doubleMetaphoneCompare($left_name_component, $right_name_component);
+		}
+	}
 	return 0;
 }
 
@@ -739,7 +750,7 @@ sub compareNames($$$$) {
 		$left_name = $`;
 	}
 
-	if ($left_name =~ /^(.*?)\s(.*?)\s(.*?)$/) {
+	if ($left_name =~ /^(.*?)\s(.*)\s(.*?)$/) {
 		$left_name_first = $1;
 		$left_name_middle = $2;
 		$left_name_last= $3;
@@ -748,11 +759,6 @@ sub compareNames($$$$) {
 		$left_name_last= $2;
 	} elsif ($left_name =~ /^(.*?)$/) {
 		$left_name_first = $1;
-	# This will happen when the profile has multiple middle names
-	} elsif ($left_name =~ /^(.*?)\s(.*)\s(.*?)$/) {
-		$left_name_first = $1;
-		$left_name_middle = $2;
-		$left_name_last= $3;
 	# This should not happen
 	} else {
 		$left_name_first = $left_name;
@@ -768,7 +774,7 @@ sub compareNames($$$$) {
 		$right_name = $`;
 	}
 
-	if ($right_name =~ /^(.*?)\s(.*?)\s(.*?)$/) {
+	if ($right_name =~ /^(.*?)\s(.*)\s(.*?)$/) {
 		$right_name_first = $1;
 		$right_name_middle = $2;
 		$right_name_last= $3;
@@ -777,11 +783,6 @@ sub compareNames($$$$) {
 		$right_name_last= $2;
 	} elsif ($right_name =~ /^(.*?)$/) {
 		$right_name_first = $1;
-	# This will happen when the profile has multiple middle names
-	} elsif ($right_name =~ /^(.*?)\s(.*)\s(.*?)$/) {
-		$right_name_first = $1;
-		$right_name_middle = $2;
-		$right_name_last= $3;
 	# This should not happen
 	} else {
 		$right_name_first = $right_name;
@@ -1207,14 +1208,20 @@ sub compareAllProfiles($$) {
 	return ($profile_count, $match_count);
 }
 
-# Finish this if/when we get an API for it
+# todo: test this on 4354532190790066194 when Amos fixes the API
 sub checkPublic($) {
 	my $profile_id	= shift;
 	return if (!$profile_id);
 	geniLogin() if !$env{'logged_in'};
 
-	my $url = "http://www.geni.com/api/profiles/TBD........";
-	# $m->get($url);
+	my $result = new HTTP::Response;
+	my $url = "https://www.geni.com/api/profiles/check_public/$profile_id";
+	$result = $m->post($url);
+	if ($result->is_success) {
+		printf("checkPublic(IS_SUCCESS): %s\n", $result->decoded_content);
+	} else {
+		printf("checkPublic: %s\n", $result->status_line);
+	}
 }
 
 sub analyzeTreeConflict($$) {
@@ -1312,13 +1319,16 @@ sub analyzeTreeConflict($$) {
 	my $profile_count = 0;
 	my $match_count = 0;
 	my $a, my $b;
+	$env{'circa_range'} = 5;
 	($a, $b) = compareAllProfiles("Father", \@fathers); $profile_count += $a; $match_count += $b;
 	($a, $b) = compareAllProfiles("Mother", \@mothers); $profile_count += $a; $match_count += $b;
 	($a, $b) = compareAllProfiles("Spouse", \@spouses); $profile_count += $a; $match_count += $b;
+	$env{'circa_range'} = 1;
 	($a, $b) = compareAllProfiles("Sons", \@sons); $profile_count += $a; $match_count += $b;
 	($a, $b) = compareAllProfiles("Daughters", \@daughters); $profile_count += $a; $match_count += $b;
 	($a, $b) = compareAllProfiles("Brothers", \@brothers); $profile_count += $a; $match_count += $b;
 	($a, $b) = compareAllProfiles("Sisters", \@sisters); $profile_count += $a; $match_count += $b;
+	$env{'circa_range'} = 5;
 	printDebug($DBG_PROGRESS, "Matched $match_count/$profile_count\n");
 
 	unlink $filename if $env{'delete_files'};
@@ -1347,6 +1357,24 @@ sub analyzeDataConflict($) {
 	exit();
 }
 
+sub stackProfiles($$) {
+	my $primary_id		= shift;
+	my $IDs_to_stack	= shift;
+
+	geniLogin() if !$env{'logged_in'};
+	my $primary_url = "<a href=\"http://www.geni.com/people/id/$primary_id\">$primary_id</a>";
+	$IDs_to_stack =~ s/ //g;
+	foreach my $id (split(/,/, $IDs_to_stack)) {
+		if ($id !~ /^\d+$/) {
+			printDebug($DBG_PROGRESS, "ERROR: '$id' is not a valid profile ID\n");
+		}
+		my $id_url = "<a href=\"http://www.geni.com/people/id/$id\">$id</a>";
+		printDebug($DBG_PROGRESS, "\nStacking Primary $primary_id: Stacking Secondary $id\n");
+		printDebug($DBG_NONE, "\nStacking Primary $primary_url: Stacking Secondary $id_url\n");
+		mergeProfiles("https://www.geni.com/api/profiles/merge/$primary_id,$id", $primary_id, $id, "STACKING_MERGE");
+	}
+}
+
 sub rangeBeginEnd($$$$) {
 	my $range_begin = shift;
 	my $range_end   = shift;
@@ -1369,6 +1397,7 @@ sub rangeBeginEnd($$$$) {
 			$conflict_count, $type, $max_page));
 
 	if ($range_end > $max_page || !$range_end) {
+		printDebug($DBG_PROGRESS, "Adjusting -re '$range_end' to the maximum page '$max_page'\n");
 		$range_end = $max_page;
 	}
 
@@ -1378,6 +1407,11 @@ sub rangeBeginEnd($$$$) {
 
 	if (!$range_begin) {
 		$range_begin = 1;
+	}
+
+	if ($range_begin > $range_end) {
+		printDebug($DBG_PROGRESS, "ERROR: -rb $range_begin is greater than -re '$range_end'\n");
+		exit();
 	}
 	printDebug($DBG_PROGRESS, "Page Range $range_begin -> $range_end\n");
 
@@ -1403,11 +1437,13 @@ sub getJSON ($$) {
 	return $json_structure;
 }
 
-sub apiURL($$) {
+sub apiURL($$$) {
 	my $api_action	= shift;
 	my $page	= shift;
-	return sprintf("https://www.geni.com/api/profiles/%s?collaborators=true&order=last_modified_at&direction=%s&page=%s%s",
+	my $focus_id	= shift;
+	return sprintf("https://www.geni.com/api/profiles/%s?%s&order=last_modified_at&direction=%s&page=%s%s",
 			$api_action,
+			$focus_id ? "focus_id=$focus_id" : "collaborators=true",
 			$env{'direction'},
 			$page,
 			$env{'all_of_geni'} ? "&all=true" : "");
@@ -1417,10 +1453,16 @@ sub apiURL($$) {
 # Loop through every page of a JSON list and analyze each profile,
 # merge, etc on each page. This can take days....
 #
-sub traverseJSONPages($$$) {
+sub traverseJSONPages($$$$) {
 	my $range_begin	= shift;
 	my $range_end	= shift;
 	my $type	= shift;
+	my $focus_id	= shift;
+
+	if ($focus_id) {
+		printDebug($DBG_PROGRESS, "ERROR: focus_id is not supported via the API yet\n");
+		return;
+	}
 
 	my $api_action;
 	if ($type eq "PENDING_MERGES") {
@@ -1434,11 +1476,15 @@ sub traverseJSONPages($$$) {
 
 	} elsif ($type eq "DATA_CONFLICTS") {
 		$api_action = "data_conflicts";
+
+	} else {
+		printDebug($DBG_PROGRESS, "ERROR: type '$type' is not supported\n");
+		return;
 	}
 
 	($range_begin, $range_end) = rangeBeginEnd($range_begin, $range_end, $type, $api_action);
 	my $filename = "$env{'datadir'}/$api_action\_$range_end\.json";
-	my $url = apiURL($api_action, $range_end);
+	my $url = apiURL($api_action, $range_end, $focus_id);
 	my $json_page = getJSON($filename, $url);
 	return 0 if (!$json_page);
 
@@ -1447,7 +1493,7 @@ sub traverseJSONPages($$$) {
 		$url =~ /page=(\d+)/;
 		my $page = $1;
 		if ($page - 1 >= $range_begin) {
-			$next_url = apiURL($api_action, $page - 1);
+			$next_url = apiURL($api_action, $page - 1, $focus_id);
 		} else {
 			$next_url = "";
 		}
@@ -1456,7 +1502,7 @@ sub traverseJSONPages($$$) {
 
 		my $loop_start_time = time();
 		my $page_profile_count = 0;
-		my $filename = "$env{'datadir'}/merge_list_$page.json";
+		my $filename = "$env{'datadir'}/$api_action\_$page.json";
 		my $json_page = getJSON($filename, $url);
 		$url = $next_url;
 		next if (!$json_page);
@@ -1624,6 +1670,10 @@ sub main() {
 		} elsif ($ARGV[$i] eq "-pms" || $ARGV[$i] eq "-pending_merges") {
 			$env{'action'} = "pending_merges";
 
+		} elsif ($ARGV[$i] eq "-pmfg") {
+			$env{'action'} = "pending_merges_family_group";
+			$left_id = $ARGV[++$i];
+
 		} elsif ($ARGV[$i] eq "-pm" || $ARGV[$i] eq "-pending_merge") {
 			$left_id = $ARGV[++$i];
 			$right_id = $ARGV[++$i];
@@ -1631,6 +1681,10 @@ sub main() {
 
 		} elsif ($ARGV[$i] eq "-tcs" || $ARGV[$i] eq "-tree_conflicts") {
 			$env{'action'} = "tree_conflicts";
+
+		} elsif ($ARGV[$i] eq "-tcfg") {
+			$env{'action'} = "tree_conflicts_family_group";
+			$left_id = $ARGV[++$i];
 
 		} elsif ($ARGV[$i] eq "-tc" || $ARGV[$i] eq "-tree_conflict") {
 			$left_id = $ARGV[++$i];
@@ -1650,6 +1704,11 @@ sub main() {
 			$env{'action'} = "data_conflict";
 			$left_id = $ARGV[++$i];
 
+		} elsif ($ARGV[$i] eq "-stack") {
+			$env{'action'} = "stack";
+			$left_id = $ARGV[++$i];
+			$right_id = $ARGV[++$i];
+
 		# Optional
 		} elsif ($ARGV[$i] eq "-all" || $ARGV[$i] eq "-all_of_geni") {
 			$env{'all_of_geni'} = 1;
@@ -1668,9 +1727,6 @@ sub main() {
 
 		} elsif ($ARGV[$i] eq "-x") {
 			$env{'delete'} = 1;
-
-		} elsif ($ARGV[$i] eq "-c" || $ARGV[$i] eq "-circa") {
-			$env{'circa_range'} = $ARGV[++$i];
 
 		} elsif ($ARGV[$i] eq "-h" || $ARGV[$i] eq "-help") {
 			printHelp();
@@ -1749,9 +1805,12 @@ sub main() {
 
 	if ($env{'action'} eq "pending_merges") {
 		do {
-			traverseJSONPages($range_begin, $range_end, "PENDING_MERGES");
+			traverseJSONPages($range_begin, $range_end, "PENDING_MERGES", 0);
 			system "rm -rf $env{'datadir'}/*" if ($env{'loop'});
 		} while ($env{'loop'});
+
+	} elsif ($env{'action'} eq "pending_merges_family_group") {
+		traverseJSONPages($range_begin, $range_end, "PENDING_CONFLICTS", $left_id);
 
 	} elsif ($env{'action'} eq "pending_merge") {
 		if (!$left_id || !$right_id) {
@@ -1764,9 +1823,20 @@ sub main() {
 
 	} elsif ($env{'action'} eq "tree_conflicts") {
 		do {
-			traverseJSONPages($range_begin, $range_end, "TREE_CONFLICTS");
+			traverseJSONPages($range_begin, $range_end, "TREE_CONFLICTS", 0);
 			system "rm -rf $env{'datadir'}/*" if ($env{'loop'});
 		} while ($env{'loop'});
+
+	} elsif ($env{'action'} eq "tree_conflicts_family_group") {
+		validateProfileID($left_id);
+		analyzeTreeConflict($left_id, "parent");
+		analyzeTreeConflict($left_id, "siblings");
+		analyzeTreeConflict($left_id, "partner");
+		analyzeTreeConflict($left_id, "children");
+		do {
+			$env{'matches'} = 0;
+			traverseJSONPages($range_begin, $range_end, "TREE_CONFLICTS", $left_id);
+		} while ($env{'matches'} > 0);
 
 	} elsif ($env{'action'} eq "tree_conflict") {
 		validateProfileID($left_id);
@@ -1780,7 +1850,7 @@ sub main() {
 		$env{'all_of_geni'} = 0;
 
 		do {
-			traverseJSONPages($range_begin, $range_end, "TREE_MATCHES");
+			traverseJSONPages($range_begin, $range_end, "TREE_MATCHES", 0);
 			system "rm -rf $env{'datadir'}/*" if ($env{'loop'});
 		} while ($env{'loop'});
 
@@ -1788,9 +1858,13 @@ sub main() {
 		validateProfileID($left_id);
 		analyzeTreeMatch($left_id);
 
+	} elsif ($env{'action'} eq "stack") {
+		validateProfileID($left_id);
+		stackProfiles($left_id, $right_id);
+
 	} elsif ($env{'action'} eq "data_conflicts") {
 		do {
-			traverseJSONPages($range_begin, $range_end, "DATA_CONFLICTS");
+			traverseJSONPages($range_begin, $range_end, "DATA_CONFLICTS", 0);
 			system "rm -rf $env{'datadir'}/*" if ($env{'loop'});
 		} while ($env{'loop'});
 
