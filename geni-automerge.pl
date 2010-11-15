@@ -8,6 +8,9 @@ use Time::HiRes;
 use JSON;
 # http://search.cpan.org/~maurice/Text-DoubleMetaphone-0.07/DoubleMetaphone.pm
 use Text::DoubleMetaphone qw( double_metaphone );
+# Since we use HTTPS, must have support for it. This makes it easy to understand
+# what's wrong if it's not installed.
+use IO::Socket::SSL;
 use HTTP::Response;
 
 # globals and constants
@@ -22,8 +25,12 @@ my $DBG_JSON			= "DBG_JSON";
 my $DBG_MATCH_DATE		= "DBG_MATCH_DATE";
 my $DBG_MATCH_BASIC		= "DBG_MATCH_BASIC";
 
-init();
-main();
+our $CALLED_BY_TEST_SCRIPT;
+
+if (!$CALLED_BY_TEST_SCRIPT) {
+    init();
+    main();
+}
 
 sub init(){
 	# configuration
@@ -379,7 +386,7 @@ sub getPage($$) {
 	geniLogin() if !$env{'logged_in'};
 	printDebug($DBG_IO, "getPage(fetch): $url\n");
 	sleepIfNeeded();
-	$m->get($url);
+	$m->get($url) || die "getPage($url) failed";
 	write_file($filename, $m->content(), 0);
 	updateGetHistory();
 }
@@ -1893,6 +1900,8 @@ sub main() {
 			int($run_time % 60)));
 
 }
+
+1;
 
 __END__
 46,805,758 big tree profiles on 10/29/2010
