@@ -16,9 +16,10 @@ my $Test = Test::Builder->new;
 
 init();
 
-$Test->ok(yearInRange("1200", "1200", 0), "identical years");
-$Test->ok(!yearInRange("1200", "1201", 0), "Adjacent no circa");
-$Test->ok(yearInRange("1200", "1201", 1), "Adjacent with circa");
+$Test->ok(numbersInRange("1200", "1200"), "identical years");
+$Test->ok(!numbersInRange("1200", "1201"), "Adjacent no circa");
+$Test->ok(numbersInRange("1200", "1201", 1, 2), "Adjacent with circa");
+$Test->ok(!numbersInRange("1200", "1203", 1, 2), "Adjacent too far apart");
 
 
 $Test->done_testing();
