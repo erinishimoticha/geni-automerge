@@ -14,7 +14,7 @@ use IO::Socket::SSL;
 use HTTP::Response;
 
 # globals and constants
-my (%env, %debug, %blacklist_managers, @get_history);
+my (%env, %debug, %blacklist_managers, @get_history, %private_profiles);
 my $m = WWW::Mechanize->new(autocheck => 0);
 my $DBG_NONE			= "DBG_NONE"; # Normal output
 my $DBG_PROGRESS		= "DBG_PROGRESS";
@@ -551,6 +551,7 @@ sub cleanupNameGuts($) {
 
 	# Remove punctuation
 	$name =~ s/ d\'/ /g;
+	$name =~ s/\&/ /g;
 	$name =~ s/\./ /g;
 	$name =~ s/\?/ /g;
 	$name =~ s/\*/ /g;
@@ -1015,6 +1016,17 @@ sub compareProfiles($$) {
 	my $geni_profile = $left_profile;
 	foreach my $json_profile (@{$json_text->{'results'}}) {
 
+		# Never ever ever ever ever ever ever ever try to merge with a claimed profile.
+		# If it is a historical profile this can cause all kinds of private profile
+		# issues in that part of the tree.
+		if ($json_profile->{'focus'}->{'claimed'} ne "false") {
+			printDebug($DBG_NONE,
+				sprintf("NO_MATCH: %s is a claimed profile\n",
+					($geni_profile == $left_profile) ? $id1_url : $id2_url));
+			unlink $filename if $env{'delete_files'};
+			return 0;
+		}
+
 		# If the profile isn't on the big tree then don't merge it.
 		if (!$env{'merge_little_trees'} && $json_profile->{'focus'}->{'big_tree'} ne "true") {
 			printDebug($DBG_NONE,
@@ -1036,13 +1048,18 @@ sub compareProfiles($$) {
 			return 0;
 		}
 
-		# If there is more than one manager geni puts them in an
-		# array, if not they just list it as a string.
+		# They keep changing the format for how they list managers :( 
+		# Make this work for the old and new format and bail out if
+		# they change it again.
 		my @managers;
-		if ($json_profile->{'focus'}->{'managers'} =~ /^(\d+)$/) {
-			push @managers, $1;
-		} else {
-			@managers = @{$json_profile->{'focus'}->{'managers'}};
+		foreach my $manager_line (@{$json_profile->{'focus'}->{'managers'}}) {
+			if ($manager_line =~ /profiles\/(.*)$/) { 
+				push @managers, split(/,/, $1);
+			} elsif ($manager_line =~ /^(\d+)$/) {
+				push @managers, $1;
+			} else {
+				gracefulExit("ERROR: Manager line '$manager_line' is invalid\n");
+			}
 		}
 
 		# Do not merge a profile managed by any of the blacklist_managers
@@ -1215,20 +1232,17 @@ sub compareAllProfiles($$) {
 	return ($profile_count, $match_count);
 }
 
-# todo: test this on 4354532190790066194 when Amos fixes the API
 sub checkPublic($) {
 	my $profile_id	= shift;
 	return if (!$profile_id);
 	geniLogin() if !$env{'logged_in'};
 
 	my $result = new HTTP::Response;
-	my $url = "https://www.geni.com/api/profiles/check_public/$profile_id";
-	$result = $m->post($url);
-	if ($result->is_success) {
-		printf("checkPublic(IS_SUCCESS): %s\n", $result->decoded_content);
-	} else {
-		printf("checkPublic: %s\n", $result->status_line);
-	}
+	$result = $m->post("https://www.geni.com/api/profiles/check_public/$profile_id");
+
+	return ($result->decoded_content =~ /true/ ? 1 : 0) if ($result->is_success);
+	printDebug($DBG_PROGRESS, sprintf("ERROR: checkPublic result failed '%s'\n", $result->status_line));
+	return 0;
 }
 
 sub analyzeTreeConflict($$) {
@@ -1279,6 +1293,10 @@ sub analyzeTreeConflict($$) {
 			my $name_last = $json_profile->{'nodes'}->{$j}->{'last_name'};
 			my $name_maiden = $json_profile->{'nodes'}->{$j}->{'maiden_name'};
 			my $name = cleanupName($name_first, $name_middle, $name_last, $name_maiden);
+
+			# A "hidden_child" is just a placeholder profile and can be ignored
+			next if ($rel eq "hidden_child");
+
 			if ($id eq "") {
 				printDebug($DBG_PROGRESS, "ERROR: $i $j is missing from the json\n");
 				next;
@@ -1315,8 +1333,6 @@ sub analyzeTreeConflict($$) {
 					}
 				}
 
-			# A "hidden_child" is just a placeholder profile and can be ignored
-			} elsif ($rel eq "hidden_child") {
 			} else {
 				printDebug($DBG_NONE, "ERROR: unknown rel type '$rel'\n");
 			}
@@ -1411,8 +1427,8 @@ sub rangeBeginEnd($$$$) {
 		$range_end = $max_page;
 	}
 
-	for (my $i = $range_begin; $i <= $range_end; $i++) {
-		$range_begin = $i if (-e "$env{'datadir'}/$api_action\_$i.json");
+	for (my $i = $range_end; $i >= $range_begin; $i--) {
+		$range_end = $i if (-e "$env{'datadir'}/$api_action\_$i.json");
 	}
 
 	if (!$range_begin) {
@@ -1423,7 +1439,7 @@ sub rangeBeginEnd($$$$) {
 		printDebug($DBG_PROGRESS, "ERROR: -rb $range_begin is greater than -re '$range_end'\n");
 		exit();
 	}
-	printDebug($DBG_PROGRESS, "Page Range $range_begin -> $range_end\n");
+	printDebug($DBG_PROGRESS, "Page Range $range_end -> $range_begin\n");
 
 	return ($range_begin, $range_end);
 }
@@ -1451,6 +1467,8 @@ sub apiURL($$$) {
 	my $api_action	= shift;
 	my $page	= shift;
 	my $focus_id	= shift;
+
+	# pass "only_ids=true" when they get the API fixed
 	return sprintf("https://www.geni.com/api/profiles/%s?%s&order=last_modified_at&direction=%s&page=%s%s",
 			$api_action,
 			$focus_id ? "focus_id=$focus_id" : "collaborators=true",
@@ -1523,7 +1541,28 @@ sub traverseJSONPages($$$$) {
 			printDebug($DBG_PROGRESS, "Page $page/$range_end: Profile $page_profile_count: Overall Profile $env{'profiles'}\n");
 		
 			if ($type eq "PENDING_MERGES") {
-				if ($json_list_entry->{'profiles'} =~ /\/(\d+),(\d+)$/) {
+				my $public_profiles = 1;
+				foreach my $private_ID (@{$json_list_entry->{'private'}}) {
+					$private_ID =~ /profiles\/(\d+)$/;
+					$private_ID = $1;
+					if ($private_profiles{$private_ID}) {
+						$public_profiles = 0;
+						printDebug($DBG_PROGRESS,
+							"PRIVATE_PROFILE: $private_ID is a known private profile\n");
+					} elsif (checkPublic($private_ID)) {
+						printDebug($DBG_PROGRESS,
+							"PRIVATE_PROFILE: $private_ID was converted from public to private\n");
+					} else {
+						printDebug($DBG_PROGRESS,
+							"PRIVATE_PROFILE: $private_ID could not be converted from public to private\n");
+						$public_profiles = 0;
+						$private_profiles{$private_ID} = 1;
+						write_file($env{'private_profiles'}, "$private_ID\n", 1);
+					}
+				}
+
+				if ($public_profiles)  {
+					$json_list_entry->{'profiles'} =~ /\/(\d+),(\d+)$/;
 					analyzePendingMerge($1, $2);
 				}
 			} elsif ($type eq "TREE_CONFLICTS") {
@@ -1781,6 +1820,7 @@ sub main() {
 	$env{'datadir'} 	= "script_data";
 	$env{'logdir'}		= "logs";
 	$env{'merge_log_file'}	= "merge_log.html";
+	$env{'private_profiles'}= "private_profiles.txt";
 	$env{'log_file'}	= "$env{'logdir'}/logfile_" . dateHourMinuteSecond() . ".html";
 
 	if ($run_from_cgi) {
@@ -1789,6 +1829,7 @@ sub main() {
 		$env{'datadir'} 	= "$env{'user_home_dir'}/script_data";
 		$env{'logdir'}		= "$env{'user_home_dir'}/logs";
 		$env{'merge_log_file'}	= "$env{'home_dir'}/merge_log.html";
+		$env{'private_profiles'}= "$env{'home_dir'}/private_profiles.txt";
 		system "rm -rf $env{'datadir'}/*";
 		system "rm -rf $env{'logdir'}/*";
 		(mkdir $env{'home_dir'}, 0755) if !(-e $env{'home_dir'});
@@ -1800,6 +1841,13 @@ sub main() {
 	(mkdir $env{'datadir'}, 0755) if !(-e $env{'datadir'});
 	(mkdir $env{'logdir'}, 0755) if !(-e $env{'logdir'});
 	write_file($env{'log_file'}, "<pre>", 0);
+
+	open(FH, $env{'private_profiles'});
+	while (<FH>) {
+		chomp();
+		$private_profiles{$_} = 1;
+	}
+	close FH;
 
 	if ($env{'password'} eq "") {
 		if ($run_from_cgi) {
