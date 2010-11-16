@@ -1214,7 +1214,7 @@ sub mergeProfiles($$$$) {
  					$year+1900, $mon+1, $mday, $hour, $min, $sec,
 					$env{'username'}, $desc, $id1_url, $id2_url), 1);
 		$env{'matches'}++;
-		$new_tree_conflicts{$id1} = 1 if ($env{'action'} eq "tree_conflicts_recursive");
+		$new_tree_conflicts{$id1} = 1;
 	} else {
 		printDebug($DBG_PROGRESS, "MERGE FAILED: $id1 and $id2\n");
 		write_file($env{'merge_fail_file'}, "Failed merge for $id1_url with $id2_url\n", 1);
@@ -1321,6 +1321,18 @@ sub analyzeTreeConflict($$) {
 	unlink $filename if $env{'delete_files'};
 }
 
+# Resolve any new tree conflicts that were created. This could in turn
+# create more tree conflicts so this loop could run for a while.
+sub analyzeNewTreeConflicts() {
+	foreach my $id (keys %new_tree_conflicts) {
+		print "NEW_TREE_CONFLICTS: $id\n";
+		analyzeTreeConflict($id, "parent");
+		analyzeTreeConflict($id, "siblings");
+		analyzeTreeConflict($id, "partner");
+		analyzeTreeConflict($id, "children");
+		delete $new_tree_conflicts{$id};
+	}
+}
 sub jsonToFamilyArrays($$$$$$$$$$) {
 	my $json_profile	= shift;
 	my $profile_id		= shift;
@@ -1476,17 +1488,7 @@ sub analyzeTreeConflictRecursive($) {
 
 	printDebug($DBG_PROGRESS, "$env{'matches'} matches via immediate family members\n");
 
-	# And last but not least resolve any new tree conflicts that were created.
-	# This could in turn create more tree conflicts so this loop could run for
-	# hours or even days.
-	foreach my $id (keys %new_tree_conflicts) {
-		delete $new_tree_conflicts{$id};
-		print "NEW_TREE_CONFLICTS: $id\n";
-		analyzeTreeConflict($id, "parent");
-		analyzeTreeConflict($id, "siblings");
-		analyzeTreeConflict($id, "partner");
-		analyzeTreeConflict($id, "children");
-	}
+	analyzeNewTreeConflicts();
 	printDebug($DBG_PROGRESS, "$env{'matches'} matches via extended family\n");
 }
 
@@ -1705,7 +1707,10 @@ sub traverseJSONPages($$$$) {
 			 		analyzeTreeConflict($json_list_entry->{'profile'}, "children");
 				} else {
 					printDebug($DBG_PROGRESS, "ERROR: Unknown tree conflict type '$conflict_type'\n");
+					next;
 				}
+
+				analyzeNewTreeConflicts();
 			} elsif ($type eq "TREE_MATCHES") {
 				analyzeTreeMatch(0);
 			} elsif ($type eq "DATA_CONFLICTS") {
@@ -1911,10 +1916,7 @@ sub main() {
 			printHelp();
 
 		# Developer options, these are not listed in the help menu
-		} elsif ($ARGV[$i] eq "-api_get_timeframe") {
-			$env{'get_timeframe'} = $ARGV[++$i];
-
-		} elsif ($ARGV[$i] eq "-api_get_limit") {
+		} elsif ($ARGV[$i] eq "-api" || $ARGV[$i] eq "-api_get_limit") {
 			$env{'get_limit'} = $ARGV[++$i];
 
 		} elsif ($ARGV[$i] eq "-t" || $ARGV[$i] eq "-test") {
