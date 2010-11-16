@@ -110,11 +110,12 @@ sub printHelp() {
 #	print STDERR "-pmfg X: Pending Merges - Analyze for the family-group of profile ID X\n";
 	print STDERR "-tcs   : Tree Conflicts - Analyze your entire list\n";
 	print STDERR "-tc X  : Tree Conflicts - Analyze profile ID X\n";
-#	print STDERR "-tcr X : Tree Conflicts - Analyze recursively for profile ID X\n";
+	print STDERR "-tcr X : Tree Conflicts - Analyze recursively for profile ID X\n";
 #	print STDERR "-tms   : Tree Matches   - Analyze your entire list\n";
 #	print STDERR "-tm X  : Tree Matches   - Analyze profile ID X\n";
 #	print STDERR "-dcs   : Data Conflicts - Analyze your entire list\n";
 #	print STDERR "-dc X  : Data Conflicts - Analyze profile ID X\n";
+	print STDERR "-stack X \"A,B,C\": Stack profiles A, B, and C onto profile X\n";
 	print STDERR "\n";
 	print STDERR "Options for analyzing a list:\n";
 	print STDERR "-all : Include 'all of geni' pending merges, tree conflicts, etc\n";
@@ -552,6 +553,7 @@ sub cleanupNameGuts($) {
 	# Remove punctuation
 	$name =~ s/ d\'/ /g;
 	$name =~ s/\&/ /g;
+	$name =~ s/\+/ /g;
 	$name =~ s/\./ /g;
 	$name =~ s/\?/ /g;
 	$name =~ s/\*/ /g;
@@ -570,23 +572,74 @@ sub cleanupNameGuts($) {
 		$name = $` . " " . $';
 	}
 
-	my @strings_to_remove = ("di", "de", "of", "av", "la", "le", "du",
-				"nn", "unknown", "<unknown>", "unk",
-				"daughter", "dau", "wife", "mr", "mrs", "miss", "duchess",
-				"lord", "duke", "earl", "prince", "princess", "king", "queen", "baron",
-				"csa", "general", "gen", "president", "pres", "countess", "lieutenant", "lt",
-				"capt", "captain", "chief justice", "honorable", "hon", "col", "dr", "colonel",
+	my @strings_to_remove = (# Do the multi-word phrases first
+				"private first class", "pfc",
+				"chief justice",
+				"chief warrant officer", "cwo",
+				"rear admiral",
+				"vice admiral",
+				"lance corporal",
+				"warrant officer",
+				"petty officer",
+				"no name",
+				"marine corps", "air force",
+
+				# Now do all of the single word phrases
+				"army", "navy", "usaf", "usmc",
+				"di", "de", "of", "av", "la", "le", "du", " - ", "the",
+				"daughter", "dau", "wife", "mr", "mrs", "miss", "dr", "son",
+				"duchess", "lord", "duke", "earl", "prince", "princess", "king", "queen", "baron",
+				"airman", "basic", "seaman", "fleet", "force", "ensign",
+				"admiral",
+				"captain", "capt", "cpt",
+				"chief",
+				"class",
+				"colonel", "col",
+				"commander",
+				"command",
+				"corporal", "cpl",
+				"count", "countess", "ct", "cnt",
+				"csa", 
+				"general", "gen", "brigadier",
+				"governor", "gov",
+				"gunnery",
+				"honorable", "hon",
 				"i", "ii", "iii", "iv", "v", "vi", "vii", "viii", "ix", "x", "xi", "xii", "xiii",
-				"sir", "knight", "reverend", "rev", "count", "ct", "cnt", "sheriff",
-				"jr", "sr", "junior", "senior");
+				"first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth", "ninth", "tenth",
+				"junior", "jr",
+				"knight",
+				"lieutenant", "lieut", "lt",
+				"major", "maj", "mjr",
+				"master",
+				"mayor",
+				"officer",
+				"president", "pres",
+				"reverend", "rev",
+				"sergeant", "sgt",
+				"senior", "sr",
+				"sheriff",
+				"sir",
+				"specialist",
+				"staff",
+				"unknown", "nn", "<unknown>", "unk", "unkf", "unkm");
+
+	# Remove double (or more) whitespaces
+	while ($name =~ /\s\s/) {
+		$name = $` . " " . $';
+	}
+
+	# Remove leading and trailing whitespaces
+	$name =~ s/^\s+//;
+	$name =~ s/\s+$//;
+
 	foreach my $rm_string (@strings_to_remove) {
-		while ($name =~ /^$rm_string /) {
+		while ($name =~ /^$rm_string /i) {
 			$name = $';
 		}
-		while ($name =~ / $rm_string$/) {
+		while ($name =~ / $rm_string$/i) {
 			$name = $`;
 		}
-		while ($name =~ / $rm_string /) {
+		while ($name =~ / $rm_string /i) {
 			$name = $` . " " . $';
 		}
 	}
@@ -600,10 +653,8 @@ sub cleanupNameGuts($) {
 		$name = $` . " " . $';
 	}
 
-	# Remove leading whitespaces
+	# Remove leading and trailing whitespaces
 	$name =~ s/^\s+//;
-
-	# Remove trailing whitespaces
 	$name =~ s/\s+$//;
 
 	# Combine repeating words in a name like "Robert Robert" or
@@ -1150,20 +1201,24 @@ sub mergeProfiles($$$$) {
 	my $id1_url = "<a href=\"http://www.geni.com/people/id/$id1\">$id1</a>";
 	my $id2_url = "<a href=\"http://www.geni.com/people/id/$id2\">$id2</a>";
 
-	(my $sec, my $min, my $hour, my $mday, my $mon, my $year, my $wday, my $yday, my $isdst) = localtime(time);
-	write_file($env{'merge_log_file'}, sprintf("%4d-%02d-%02d %02d:%02d:%02d :: %s :: %s :: Merged %s with %s\n",
- 			$year+1900, $mon+1, $mday, $hour, $min, $sec,
-			$env{'username'}, $desc, $id1_url, $id2_url), 1);
-	$env{'matches'}++;
 	geniLogin() if !$env{'logged_in'};
-	printDebug($DBG_PROGRESS, "MERGING: $id1 and $id2\n");
-
-	if ($env{'action'} eq "tree_conflicts_recursive") {
-		$new_tree_conflicts{$id1} = 1;
-	}
-
 	sleepIfNeeded();
-	$m->post($merge_url_api);
+
+	my $result = new HTTP::Response;
+	$result = $m->post($merge_url_api);
+	if ($result->is_success) {
+		(my $sec, my $min, my $hour, my $mday, my $mon, my $year, my $wday, my $yday, my $isdst) = localtime(time);
+		printDebug($DBG_PROGRESS, "MERGING: $id1 and $id2\n");
+		write_file($env{'merge_log_file'},
+				sprintf("%4d-%02d-%02d %02d:%02d:%02d :: %s :: %s :: Merged %s with %s\n",
+ 					$year+1900, $mon+1, $mday, $hour, $min, $sec,
+					$env{'username'}, $desc, $id1_url, $id2_url), 1);
+		$env{'matches'}++;
+		$new_tree_conflicts{$id1} = 1 if ($env{'action'} eq "tree_conflicts_recursive");
+	} else {
+		printDebug($DBG_PROGRESS, "MERGE FAILED: $id1 and $id2\n");
+		write_file($env{'merge_fail_file'}, "Failed merge for $id1_url with $id2_url\n", 1);
+	}
 	updateGetHistory();
 }
 
@@ -1626,10 +1681,10 @@ sub traverseJSONPages($$$$) {
 							"PRIVATE_PROFILE: $private_ID is a known private profile\n");
 					} elsif (checkPublic($private_ID)) {
 						printDebug($DBG_PROGRESS,
-							"PRIVATE_PROFILE: $private_ID was converted from public to private\n");
+							"PRIVATE_PROFILE: $private_ID was converted from private to public\n");
 					} else {
 						printDebug($DBG_PROGRESS,
-							"PRIVATE_PROFILE: $private_ID could not be converted from public to private\n");
+							"PRIVATE_PROFILE: $private_ID could not be converted from private to public\n");
 						$public_profiles = 0;
 						$private_profiles{$private_ID} = 1;
 						write_file($env{'private_profiles'}, "$private_ID\n", 1);
@@ -1895,6 +1950,7 @@ sub main() {
 	$env{'datadir'} 	= "script_data";
 	$env{'logdir'}		= "logs";
 	$env{'merge_log_file'}	= "merge_log.html";
+	$env{'merge_fail_file'}	= "merge_fail.html";
 	$env{'private_profiles'}= "private_profiles.txt";
 	$env{'log_file'}	= "$env{'logdir'}/logfile_" . dateHourMinuteSecond() . ".html";
 
@@ -1904,6 +1960,7 @@ sub main() {
 		$env{'datadir'} 	= "$env{'user_home_dir'}/script_data";
 		$env{'logdir'}		= "$env{'user_home_dir'}/logs";
 		$env{'merge_log_file'}	= "$env{'home_dir'}/merge_log.html";
+		$env{'merge_fail_file'}	= "$env{'home_dir'}/merge_fail.html";
 		$env{'private_profiles'}= "$env{'home_dir'}/private_profiles.txt";
 		system "rm -rf $env{'datadir'}/*";
 		system "rm -rf $env{'logdir'}/*";
