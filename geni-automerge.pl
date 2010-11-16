@@ -14,7 +14,7 @@ use IO::Socket::SSL;
 use HTTP::Response;
 
 # globals and constants
-my (%env, %debug, %blacklist_managers, @get_history);
+my (%env, %debug, %blacklist_managers, @get_history, %private_profiles, %new_tree_conflicts);
 my $m = WWW::Mechanize->new(autocheck => 0);
 my $DBG_NONE			= "DBG_NONE"; # Normal output
 my $DBG_PROGRESS		= "DBG_PROGRESS";
@@ -110,7 +110,7 @@ sub printHelp() {
 #	print STDERR "-pmfg X: Pending Merges - Analyze for the family-group of profile ID X\n";
 	print STDERR "-tcs   : Tree Conflicts - Analyze your entire list\n";
 	print STDERR "-tc X  : Tree Conflicts - Analyze profile ID X\n";
-#	print STDERR "-tcfg X: Tree Conflicts - Analyze for the family-group of profile ID X\n";
+#	print STDERR "-tcr X : Tree Conflicts - Analyze recursively for profile ID X\n";
 #	print STDERR "-tms   : Tree Matches   - Analyze your entire list\n";
 #	print STDERR "-tm X  : Tree Matches   - Analyze profile ID X\n";
 #	print STDERR "-dcs   : Data Conflicts - Analyze your entire list\n";
@@ -551,6 +551,7 @@ sub cleanupNameGuts($) {
 
 	# Remove punctuation
 	$name =~ s/ d\'/ /g;
+	$name =~ s/\&/ /g;
 	$name =~ s/\./ /g;
 	$name =~ s/\?/ /g;
 	$name =~ s/\*/ /g;
@@ -942,32 +943,32 @@ sub comparePartners($$$$) {
 	# printDebug($DBG_MATCH_BASIC, sprintf("-left  : %s\n", $left_partners));
 	# printDebug($DBG_MATCH_BASIC, sprintf("-right : %s\n", $right_partners));
 
-	if ($left_partners ne $right_partners) { 
-		foreach my $person (split(/:/, $left_partners)) {
-			foreach my $person2 (split(/:/, $right_partners)) {
-				if (compareNames($gender, $person, $person2, 1)) {
-					printDebug($DBG_MATCH_BASIC, "One of the $partner_type is a match.\n");
-					return 1;
-				}
-			}
-		}
-
-		printDebug($DBG_MATCH_BASIC, "NO_MATCH: $partner_type do not match\n");
-
-		printDebug($DBG_MATCH_BASIC, "Left Profile $partner_type:\n");
-		foreach my $person (split(/:/, $left_partners)) {
-			printDebug($DBG_MATCH_BASIC, "- $person\n");
-		}
-
-		printDebug($DBG_MATCH_BASIC, "Right Profile $partner_type:\n");
-		foreach my $person (split(/:/, $right_partners)) {
-			printDebug($DBG_MATCH_BASIC, "- $person\n");
-		}
-
-		return 0;
+	if ($left_partners eq $right_partners) { 
+		printDebug($DBG_MATCH_BASIC, "MATCH: $partner_type '$left_partners' are a match\n");
+		return 1;
 	}
 
-	return 1;
+	foreach my $person (split(/:/, $left_partners)) {
+		foreach my $person2 (split(/:/, $right_partners)) {
+			if (compareNames($gender, $person, $person2, 1)) {
+				printDebug($DBG_MATCH_BASIC, "MATCH: $partner_type '$person' is a match.\n");
+				return 1;
+			}
+		}
+	}
+
+	printDebug($DBG_MATCH_BASIC, "NO_MATCH: $partner_type do not match\n");
+	printDebug($DBG_MATCH_BASIC, "Left Profile $partner_type:\n");
+	foreach my $person (split(/:/, $left_partners)) {
+		printDebug($DBG_MATCH_BASIC, "- $person\n");
+	}
+
+	printDebug($DBG_MATCH_BASIC, "Right Profile $partner_type:\n");
+	foreach my $person (split(/:/, $right_partners)) {
+		printDebug($DBG_MATCH_BASIC, "- $person\n");
+	}
+
+	return 0;
 }
 
 sub avoidDuplicatesPush($$$) {
@@ -1015,6 +1016,17 @@ sub compareProfiles($$) {
 	my $geni_profile = $left_profile;
 	foreach my $json_profile (@{$json_text->{'results'}}) {
 
+		# Never ever ever ever ever ever ever ever try to merge with a claimed profile.
+		# If it is a historical profile this can cause all kinds of private profile
+		# issues in that part of the tree.
+		if ($json_profile->{'focus'}->{'claimed'} ne "false") {
+			printDebug($DBG_NONE,
+				sprintf("NO_MATCH: %s is a claimed profile\n",
+					($geni_profile == $left_profile) ? $id1_url : $id2_url));
+			unlink $filename if $env{'delete_files'};
+			return 0;
+		}
+
 		# If the profile isn't on the big tree then don't merge it.
 		if (!$env{'merge_little_trees'} && $json_profile->{'focus'}->{'big_tree'} ne "true") {
 			printDebug($DBG_NONE,
@@ -1036,13 +1048,18 @@ sub compareProfiles($$) {
 			return 0;
 		}
 
-		# If there is more than one manager geni puts them in an
-		# array, if not they just list it as a string.
+		# They keep changing the format for how they list managers :( 
+		# Make this work for the old and new format and bail out if
+		# they change it again.
 		my @managers;
-		if ($json_profile->{'focus'}->{'managers'} =~ /^(\d+)$/) {
-			push @managers, $1;
-		} else {
-			@managers = @{$json_profile->{'focus'}->{'managers'}};
+		foreach my $manager_line (@{$json_profile->{'focus'}->{'managers'}}) {
+			if ($manager_line =~ /profiles\/(.*)$/) { 
+				push @managers, split(/,/, $1);
+			} elsif ($manager_line =~ /^(\d+)$/) {
+				push @managers, $1;
+			} else {
+				gracefulExit("ERROR: Manager line '$manager_line' is invalid\n");
+			}
 		}
 
 		# Do not merge a profile managed by any of the blacklist_managers
@@ -1071,57 +1088,17 @@ sub compareProfiles($$) {
 		$geni_profile->birth_year($json_profile->{'focus'}->{'birth_year'});
 		$geni_profile->id($json_profile->{'focus'}->{'id'});
 		
-		my @fathers_array;
-		my @mothers_array;
-		my @spouses_array;
-		foreach my $i (keys %{$json_profile->{'nodes'}}) {
-			next if $i !~ /union/;
-
-			my $partner_type = "";
-			# The "partners" will be parents
-			if ($json_profile->{'nodes'}->{$i}->{'edges'}->{"profile-$profile_id"}->{'rel'} eq "child") {
-				$partner_type = "parents";
-
-			# The "partners" will be spouses 
-			} elsif ($json_profile->{'nodes'}->{$i}->{'edges'}->{"profile-$profile_id"}->{'rel'} eq "partner") {
-				$partner_type = "spouses";
-			}
-
-			# So far spouse and ex_spouse are the only two types I've seen
-			my $union_type = $json_profile->{'nodes'}->{$i}->{'status'};
-			next if ($union_type ne "spouse" && $union_type ne "ex_spouse");
-			
-			foreach my $j (keys %{$json_profile->{'nodes'}->{$i}->{'edges'}}) {
-				# The profile that we are analyzing will be listed in the union,
-				# just skip over it
-				next if $j eq "profile-$profile_id";
-
-				# We're ignoring children and siblings for now
-				my $rel = $json_profile->{'nodes'}->{$i}->{'edges'}->{$j}->{'rel'};
-				next if $rel ne "partner";
-
-				my $gender = $json_profile->{'nodes'}->{$j}->{'gender'};
-				my $name_first = $json_profile->{'nodes'}->{$j}->{'first_name'};
-				my $name_middle = $json_profile->{'nodes'}->{$j}->{'middle_name'};
-				my $name_last = $json_profile->{'nodes'}->{$j}->{'last_name'};
-				my $name_maiden = $json_profile->{'nodes'}->{$j}->{'maiden_name'};
-				my $name = cleanupName($name_first, $name_middle, $name_last, $name_maiden);
-
-				if ($partner_type eq "parents") {
-					if ($gender eq "male") {
-						avoidDuplicatesPush($gender, \@fathers_array, $name);
-					} elsif ($gender eq "female") {
-						avoidDuplicatesPush($gender, \@mothers_array, $name);
-					}
-				} elsif ($partner_type eq "spouses") {
-					avoidDuplicatesPush($gender, \@spouses_array, $name);
-				}
-			}
-		}
-
-		$geni_profile->fathers(join(":", @fathers_array));
-		$geni_profile->mothers(join(":", @mothers_array));
-		$geni_profile->spouses(join(":", @spouses_array));
+		my @fathers;
+		my @mothers;
+		my @spouses;
+		my @sons;
+		my @daughters;
+		my @brothers;
+		my @sisters;
+		jsonToFamilyArrays($json_profile, $profile_id, 1, \@fathers, \@mothers, \@spouses, \@sons, \@daughters, \@brothers, \@sisters);
+		$geni_profile->fathers(join(":", @fathers));
+		$geni_profile->mothers(join(":", @mothers));
+		$geni_profile->spouses(join(":", @spouses));
 		$geni_profile = $right_profile;
 	}
 
@@ -1180,6 +1157,11 @@ sub mergeProfiles($$$$) {
 	$env{'matches'}++;
 	geniLogin() if !$env{'logged_in'};
 	printDebug($DBG_PROGRESS, "MERGING: $id1 and $id2\n");
+
+	if ($env{'action'} eq "tree_conflicts_recursive") {
+		$new_tree_conflicts{$id1} = 1;
+	}
+
 	sleepIfNeeded();
 	$m->post($merge_url_api);
 	updateGetHistory();
@@ -1215,20 +1197,17 @@ sub compareAllProfiles($$) {
 	return ($profile_count, $match_count);
 }
 
-# todo: test this on 4354532190790066194 when Amos fixes the API
 sub checkPublic($) {
 	my $profile_id	= shift;
 	return if (!$profile_id);
 	geniLogin() if !$env{'logged_in'};
 
 	my $result = new HTTP::Response;
-	my $url = "https://www.geni.com/api/profiles/check_public/$profile_id";
-	$result = $m->post($url);
-	if ($result->is_success) {
-		printf("checkPublic(IS_SUCCESS): %s\n", $result->decoded_content);
-	} else {
-		printf("checkPublic: %s\n", $result->status_line);
-	}
+	$result = $m->post("https://www.geni.com/api/profiles/check_public/$profile_id");
+
+	return ($result->decoded_content =~ /true/ ? 1 : 0) if ($result->is_success);
+	printDebug($DBG_PROGRESS, sprintf("ERROR: checkPublic result failed '%s'\n", $result->status_line));
+	return 0;
 }
 
 sub analyzeTreeConflict($$) {
@@ -1241,10 +1220,6 @@ sub analyzeTreeConflict($$) {
 
 	printDebug($DBG_PROGRESS, "\nTree Conflict analyze for '$profile_id', type '$issue_type'\n");
 
-	my $filename = "$env{'datadir'}/$profile_id\.json";
-	my $json_text = getJSON($filename, "https://www.geni.com/api/profiles/immediate_family/$profile_id");
-	return 0 if (!$json_text);
-
 	my @fathers;
 	my @mothers;
 	my @spouses;
@@ -1252,7 +1227,65 @@ sub analyzeTreeConflict($$) {
 	my @daughters;
 	my @brothers;
 	my @sisters;
-	my $json_profile = $json_text;
+	my $filename = "$env{'datadir'}/$profile_id\.json";
+	my $url = "https://www.geni.com/api/profiles/immediate_family/$profile_id";
+	my $json_profile = getJSON($filename, $url);
+	return 0 if (!$json_profile);
+
+	jsonToFamilyArrays($json_profile, $profile_id, 0, \@fathers, \@mothers, \@spouses, \@sons, \@daughters, \@brothers, \@sisters);
+
+	my $profile_count = 0;
+	my $match_count = 0;
+	my $a, my $b;
+	$env{'circa_range'} = 5;
+	if ($issue_type eq "parent") {
+		($a, $b) = compareAllProfiles("Father", \@fathers); $profile_count += $a; $match_count += $b;
+		($a, $b) = compareAllProfiles("Mother", \@mothers); $profile_count += $a; $match_count += $b;
+	}
+
+	if ($issue_type eq "partner") {
+		($a, $b) = compareAllProfiles("Spouse", \@spouses); $profile_count += $a; $match_count += $b;
+	}
+
+	# todo: need a better way to handle this if the profiles we're comparing have spouses.
+	# We could go back to +- 5 for those cases.
+	$env{'circa_range'} = 1;
+	if ($issue_type eq "children") {
+		($a, $b) = compareAllProfiles("Sons", \@sons); $profile_count += $a; $match_count += $b;
+		($a, $b) = compareAllProfiles("Daughters", \@daughters); $profile_count += $a; $match_count += $b;
+	}
+
+	if ($issue_type eq "siblings") {
+		($a, $b) = compareAllProfiles("Brothers", \@brothers); $profile_count += $a; $match_count += $b;
+		($a, $b) = compareAllProfiles("Sisters", \@sisters); $profile_count += $a; $match_count += $b;
+	}
+
+	$env{'circa_range'} = 5;
+	printDebug($DBG_PROGRESS, "Matched $match_count/$profile_count\n");
+
+	unlink $filename if $env{'delete_files'};
+}
+
+sub jsonToFamilyArrays($$$$$$$$$$) {
+	my $json_profile	= shift;
+	my $profile_id		= shift;
+	my $push_name_only	= shift;
+	my $fathers_ptr		= shift;
+	my $mothers_ptr		= shift;
+	my $spouses_ptr		= shift;
+	my $sons_ptr		= shift;
+	my $daughters_ptr	= shift;
+	my $brothers_ptr	= shift;
+	my $sisters_ptr		= shift;
+
+	my @fathers	= @$fathers_ptr;
+	my @mothers	= @$mothers_ptr;
+	my @spouses	= @$spouses_ptr;
+	my @sons	= @$sons_ptr;
+	my @daughters	= @$daughters_ptr;
+	my @brothers	= @$brothers_ptr;
+	my @sisters	= @$sisters_ptr;
+
 	foreach my $i (keys %{$json_profile->{'nodes'}}) {
 		next if $i !~ /union/;
 
@@ -1279,6 +1312,11 @@ sub analyzeTreeConflict($$) {
 			my $name_last = $json_profile->{'nodes'}->{$j}->{'last_name'};
 			my $name_maiden = $json_profile->{'nodes'}->{$j}->{'maiden_name'};
 			my $name = cleanupName($name_first, $name_middle, $name_last, $name_maiden);
+			my $push_string = $push_name_only ? $name : "$id:$name:$gender";
+
+			# A "hidden_child" is just a placeholder profile and can be ignored
+			next if ($rel eq "hidden_child");
+
 			if ($id eq "") {
 				printDebug($DBG_PROGRESS, "ERROR: $i $j is missing from the json\n");
 				next;
@@ -1291,54 +1329,110 @@ sub analyzeTreeConflict($$) {
 			if ($rel eq "partner") {
 				if ($partner_type eq "parents") {
 					if ($gender eq "male") {
-						avoidDuplicatesPush("", \@fathers, "$id:$name:$gender") if ($issue_type eq "parent");
+						avoidDuplicatesPush("", $fathers_ptr, $push_string);
 					} elsif ($gender eq "female") {
-						avoidDuplicatesPush("", \@mothers, "$id:$name:$gender") if ($issue_type eq "parent");
+						avoidDuplicatesPush("", $mothers_ptr, $push_string);
 					}
 				} elsif ($partner_type eq "spouses") {
-					avoidDuplicatesPush("", \@spouses, "$id:$name:$gender") if ($issue_type eq "partner");
+					avoidDuplicatesPush("", $spouses_ptr, $push_string);
 				}
 
 			} elsif ($rel eq "child") {
 
 				if ($partner_type eq "parents") {
 					if ($gender eq "male") {
-						avoidDuplicatesPush("", \@brothers, "$id:$name:$gender") if ($issue_type eq "siblings");
+						avoidDuplicatesPush("", $brothers_ptr, $push_string);
 					} elsif ($gender eq "female") {
-						avoidDuplicatesPush("", \@sisters, "$id:$name:$gender") if ($issue_type eq "siblings");
+						avoidDuplicatesPush("", $sisters_ptr, $push_string);
 					}
 				} elsif ($partner_type eq "spouses") {
 					if ($gender eq "male") {
-						avoidDuplicatesPush("", \@sons, "$id:$name:$gender") if ($issue_type eq "children");
+						avoidDuplicatesPush("", $sons_ptr, $push_string);
 					} elsif ($gender eq "female") {
-						avoidDuplicatesPush("", \@daughters, "$id:$name:$gender") if ($issue_type eq "children");
+						avoidDuplicatesPush("", $daughters_ptr, $push_string);
 					}
 				}
 
-			# A "hidden_child" is just a placeholder profile and can be ignored
-			} elsif ($rel eq "hidden_child") {
 			} else {
 				printDebug($DBG_NONE, "ERROR: unknown rel type '$rel'\n");
 			}
 		}
 	}
+}
 
-	my $profile_count = 0;
-	my $match_count = 0;
-	my $a, my $b;
-	$env{'circa_range'} = 5;
-	($a, $b) = compareAllProfiles("Father", \@fathers); $profile_count += $a; $match_count += $b;
-	($a, $b) = compareAllProfiles("Mother", \@mothers); $profile_count += $a; $match_count += $b;
-	($a, $b) = compareAllProfiles("Spouse", \@spouses); $profile_count += $a; $match_count += $b;
-	$env{'circa_range'} = 1;
-	($a, $b) = compareAllProfiles("Sons", \@sons); $profile_count += $a; $match_count += $b;
-	($a, $b) = compareAllProfiles("Daughters", \@daughters); $profile_count += $a; $match_count += $b;
-	($a, $b) = compareAllProfiles("Brothers", \@brothers); $profile_count += $a; $match_count += $b;
-	($a, $b) = compareAllProfiles("Sisters", \@sisters); $profile_count += $a; $match_count += $b;
-	$env{'circa_range'} = 5;
-	printDebug($DBG_PROGRESS, "Matched $match_count/$profile_count\n");
+sub analyzeTreeConflictRecursive($) {
+	my $profile_id = shift;
 
-	unlink $filename if $env{'delete_files'};
+	# First merge everything you can for the profile that is our starting point
+	analyzeTreeConflict($profile_id, "parent");
+	analyzeTreeConflict($profile_id, "siblings");
+	analyzeTreeConflict($profile_id, "partner");
+	analyzeTreeConflict($profile_id, "children");
+
+
+	my @fathers;
+	my @mothers;
+	my @spouses;
+	my @sons;
+	my @daughters;
+	my @brothers;
+	my @sisters;
+
+	my $filename = "$env{'datadir'}/$profile_id\.json";
+	my $url = "https://www.geni.com/api/profiles/immediate_family/$profile_id";
+	my $json_profile = getJSON($filename, $url);
+	return 0 if (!$json_profile);
+
+	# Then build arrays of all the immediate family members of the starting profile
+	jsonToFamilyArrays($json_profile, $profile_id, 0, \@fathers, \@mothers, \@spouses, \@sons, \@daughters, \@brothers, \@sisters);
+
+	# Then resolve the tree conflicts for the immediate family members
+	my @parents_and_spouses;
+	push @parents_and_spouses, @fathers;
+	push @parents_and_spouses, @mothers;
+	push @parents_and_spouses, @spouses;
+	foreach my $family_member (@parents_and_spouses) {
+		(my $id, my $name, my $gender) = split(/:/, $family_member);
+		printDebug($DBG_PROGRESS, "PARENT or SPOUSE: $id\n");
+		analyzeTreeConflict($id, "parent");
+		analyzeTreeConflict($id, "siblings");
+		analyzeTreeConflict($id, "partner");
+	}
+
+	my @siblings;
+	push @siblings, @brothers;
+	push @siblings, @sisters;
+	foreach my $family_member (@siblings) {
+		(my $id, my $name, my $gender) = split(/:/, $family_member);
+		printDebug($DBG_PROGRESS, "SIBLING: $id\n");
+		analyzeTreeConflict($id, "partner");
+		analyzeTreeConflict($id, "children");
+	}
+
+	my @children;
+	push @children, @sons;
+	push @children, @daughters;
+	foreach my $family_member (@children) {
+		(my $id, my $name, my $gender) = split(/:/, $family_member);
+		printDebug($DBG_PROGRESS, "CHILD: $id\n");
+		analyzeTreeConflict($id, "partner");
+		analyzeTreeConflict($id, "children");
+	}
+
+	printDebug($DBG_PROGRESS, "$env{'matches'} matches via immediate family members\n");
+
+	# And last but not least resolve any new tree conflicts that were created.
+	# This could in turn create more tree conflicts so this loop could run for
+	# hours or even days.
+	foreach my $id (keys %new_tree_conflicts) {
+		delete $new_tree_conflicts{$id};
+		print "NEW_TREE_CONFLICTS: $id\n";
+		analyzeTreeConflict($id, "parent");
+		analyzeTreeConflict($id, "siblings");
+		analyzeTreeConflict($id, "partner");
+		analyzeTreeConflict($id, "children");
+	}
+	printDebug($DBG_PROGRESS, "$env{'matches'} matches via extended family\n");
 }
 
 sub analyzePendingMerge($$) {
@@ -1408,8 +1502,8 @@ sub rangeBeginEnd($$$$) {
 		$range_end = $max_page;
 	}
 
-	for (my $i = $range_begin; $i <= $range_end; $i++) {
-		$range_begin = $i if (-e "$env{'datadir'}/$api_action\_$i.json");
+	for (my $i = $range_end; $i >= $range_begin; $i--) {
+		$range_end = $i if (-e "$env{'datadir'}/$api_action\_$i.json");
 	}
 
 	if (!$range_begin) {
@@ -1420,7 +1514,7 @@ sub rangeBeginEnd($$$$) {
 		printDebug($DBG_PROGRESS, "ERROR: -rb $range_begin is greater than -re '$range_end'\n");
 		exit();
 	}
-	printDebug($DBG_PROGRESS, "Page Range $range_begin -> $range_end\n");
+	printDebug($DBG_PROGRESS, "Page Range $range_end -> $range_begin\n");
 
 	return ($range_begin, $range_end);
 }
@@ -1448,6 +1542,8 @@ sub apiURL($$$) {
 	my $api_action	= shift;
 	my $page	= shift;
 	my $focus_id	= shift;
+
+	# pass "only_ids=true" when they get the API fixed
 	return sprintf("https://www.geni.com/api/profiles/%s?%s&order=last_modified_at&direction=%s&page=%s%s",
 			$api_action,
 			$focus_id ? "focus_id=$focus_id" : "collaborators=true",
@@ -1520,7 +1616,28 @@ sub traverseJSONPages($$$$) {
 			printDebug($DBG_PROGRESS, "Page $page/$range_end: Profile $page_profile_count: Overall Profile $env{'profiles'}\n");
 		
 			if ($type eq "PENDING_MERGES") {
-				if ($json_list_entry->{'profiles'} =~ /\/(\d+),(\d+)$/) {
+				my $public_profiles = 1;
+				foreach my $private_ID (@{$json_list_entry->{'private'}}) {
+					$private_ID =~ /profiles\/(\d+)$/;
+					$private_ID = $1;
+					if ($private_profiles{$private_ID}) {
+						$public_profiles = 0;
+						printDebug($DBG_PROGRESS,
+							"PRIVATE_PROFILE: $private_ID is a known private profile\n");
+					} elsif (checkPublic($private_ID)) {
+						printDebug($DBG_PROGRESS,
+							"PRIVATE_PROFILE: $private_ID was converted from public to private\n");
+					} else {
+						printDebug($DBG_PROGRESS,
+							"PRIVATE_PROFILE: $private_ID could not be converted from public to private\n");
+						$public_profiles = 0;
+						$private_profiles{$private_ID} = 1;
+						write_file($env{'private_profiles'}, "$private_ID\n", 1);
+					}
+				}
+
+				if ($public_profiles)  {
+					$json_list_entry->{'profiles'} =~ /\/(\d+),(\d+)$/;
 					analyzePendingMerge($1, $2);
 				}
 			} elsif ($type eq "TREE_CONFLICTS") {
@@ -1689,8 +1806,8 @@ sub main() {
 		} elsif ($ARGV[$i] eq "-tcs" || $ARGV[$i] eq "-tree_conflicts") {
 			$env{'action'} = "tree_conflicts";
 
-		} elsif ($ARGV[$i] eq "-tcfg") {
-			$env{'action'} = "tree_conflicts_family_group";
+		} elsif ($ARGV[$i] eq "-tcr") {
+			$env{'action'} = "tree_conflicts_recursive";
 			$left_id = $ARGV[++$i];
 
 		} elsif ($ARGV[$i] eq "-tc" || $ARGV[$i] eq "-tree_conflict") {
@@ -1778,6 +1895,7 @@ sub main() {
 	$env{'datadir'} 	= "script_data";
 	$env{'logdir'}		= "logs";
 	$env{'merge_log_file'}	= "merge_log.html";
+	$env{'private_profiles'}= "private_profiles.txt";
 	$env{'log_file'}	= "$env{'logdir'}/logfile_" . dateHourMinuteSecond() . ".html";
 
 	if ($run_from_cgi) {
@@ -1786,6 +1904,7 @@ sub main() {
 		$env{'datadir'} 	= "$env{'user_home_dir'}/script_data";
 		$env{'logdir'}		= "$env{'user_home_dir'}/logs";
 		$env{'merge_log_file'}	= "$env{'home_dir'}/merge_log.html";
+		$env{'private_profiles'}= "$env{'home_dir'}/private_profiles.txt";
 		system "rm -rf $env{'datadir'}/*";
 		system "rm -rf $env{'logdir'}/*";
 		(mkdir $env{'home_dir'}, 0755) if !(-e $env{'home_dir'});
@@ -1797,6 +1916,13 @@ sub main() {
 	(mkdir $env{'datadir'}, 0755) if !(-e $env{'datadir'});
 	(mkdir $env{'logdir'}, 0755) if !(-e $env{'logdir'});
 	write_file($env{'log_file'}, "<pre>", 0);
+
+	open(FH, $env{'private_profiles'});
+	while (<FH>) {
+		chomp();
+		$private_profiles{$_} = 1;
+	}
+	close FH;
 
 	if ($env{'password'} eq "") {
 		if ($run_from_cgi) {
@@ -1834,16 +1960,13 @@ sub main() {
 			system "rm -rf $env{'datadir'}/*" if ($env{'loop'});
 		} while ($env{'loop'});
 
-	} elsif ($env{'action'} eq "tree_conflicts_family_group") {
+	} elsif ($env{'action'} eq "tree_conflicts_recursive") {
 		validateProfileID($left_id);
-		analyzeTreeConflict($left_id, "parent");
-		analyzeTreeConflict($left_id, "siblings");
-		analyzeTreeConflict($left_id, "partner");
-		analyzeTreeConflict($left_id, "children");
-		do {
-			$env{'matches'} = 0;
-			traverseJSONPages($range_begin, $range_end, "TREE_CONFLICTS", $left_id);
-		} while ($env{'matches'} > 0);
+		analyzeTreeConflictRecursive($left_id);
+#		do {
+#			$env{'matches'} = 0;
+#			traverseJSONPages($range_begin, $range_end, "TREE_CONFLICTS", $left_id);
+#		} while ($env{'matches'} > 0);
 
 	} elsif ($env{'action'} eq "tree_conflict") {
 		validateProfileID($left_id);
