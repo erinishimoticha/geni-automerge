@@ -21,5 +21,45 @@ $Test->ok(!numbersInRange("1200", "1201"), "Adjacent no circa");
 $Test->ok(numbersInRange("1200", "1201", 1, 2), "Adjacent with circa");
 $Test->ok(!numbersInRange("1200", "1203", 1, 2), "Adjacent too far apart");
 
+# Name cleanup tests
+$Test->ok(cleanupName("Robert James Robert Smith") eq "robert james smith",
+	  "Remove double name");
+$Test->ok(cleanupName("Robert Robert Smith") eq "robert smith",
+	  "Remove double first name");
+$Test->ok(cleanupName("tiberius claudius nero claudius tiberius claudius nero")
+	  eq "tiberius claudius nero", "Remove multiple repeated names");
+
+# Name matching tests
+$Test->ok(!compareNames("female", "Jane Smith ()", "Jane Doe ()"),
+	  "No maiden name");
+$Test->ok(compareNames("female", "Jane Smith (Doe)", "Jane Doe ()"),
+	  "Maiden name matches full name");
+$Test->ok(!compareNames("female", "Jane Doe (Smith)", "Jane Smith (Doe)"),
+	  "Swap names at marriage does not match");
+$Test->ok(compareNames("male", "John Doe (foo)", "John Doe (bar)"),
+	  "Male maiden names do not matter");
+$Test->ok(!compareNames("male", "John Smith (Doe)", "John Doe ()"),
+	  "Male maiden names do not cause match");
+$Test->ok(compareNames("female", "margaret neville (pole)", "margaret ()"),
+	  "Given name only matches");
+
+# Date tests
+$Test->ok(dateMatches("1/1/1900", "Jan 1900"));
+$Test->ok(dateMatches("1/1/1900", "1900"));
+$Test->ok(dateMatches("c. 1901", "1900"));
+$Test->ok(dateMatches("c. 1905", "1900"));
+$Test->ok(!dateMatches("c. 1906", "1900"));
+$Test->ok(!dateMatches("171/1900", "1901"));
+$Test->ok(dateMatches("c. 1/15/1785", "1787"));
+
+# Metaphone comparisions
+$Test->ok(doubleMetaphoneCompare("williams", "williams"), "Identical strings");
+$Test->ok(doubleMetaphoneCompare("williams", "willams"));
+$Test->ok(!doubleMetaphoneCompare("williams", "willliams"),
+	  "Tripled consonant - no match");
+$Test->ok(doubleMetaphoneCompare("byron", "bryon"));
+$Test->ok(doubleMetaphoneCompare("booth", "boothe"));
+$Test->ok(doubleMetaphoneCompare("margaret", "margery"));
+$Test->ok(doubleMetaphoneCompare("hepsibah", "hepzibah"));
 
 $Test->done_testing();

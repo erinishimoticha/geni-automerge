@@ -166,6 +166,9 @@ sub write_file($$$){
 	my $file = shift;
 	my $data = shift;
 	my $append = (shift) ? ">>" : ">"; # use 1 to append. 0 overwrites the entire file
+	if ($file eq "") {
+	    return;
+	}
 	open(OUT,"$append$file") || gracefulExit("\n\nERROR: write_file could not open '$file'\n\n");
 	while(!(flock OUT, 2)){}
 	print OUT $data;
@@ -1773,95 +1776,6 @@ sub traverseJSONPages($$$$) {
 	printDebug($DBG_PROGRESS, "$env{'matches'} matches out of $env{'profiles'} profiles\n");
 }
 
-sub runTestCases() {
-	my @name_tests;
-	push @name_tests, "Robert James Robert Smith:robert james smith";
-	push @name_tests, "Robert Robert Smith:robert smith";
-	push @name_tests, "tiberius claudius nero claudius tiberius claudius nero:tiberius claudius nero";
-	my $index = 1;
-	foreach my $test (@name_tests) {
-		(my $test_name, my $expected_result) = split(/:/, $test);
-		my $result = cleanupName($test_name, "", "", "");
-		printDebug($DBG_PROGRESS,
-			sprintf("cleanupName Test #%d: %s, Test Name '%s', Result '%s'\n",
-				$index,
-				($result eq $expected_result) ? "PASSED" : "FAILED",
-				$test_name,
-				$result));
-		$index++;
-	}
-	print "\n";
-	
-	my @date_tests;
-	push @date_tests, "1/1/1900:Jan 1900:1";
-	push @date_tests, "1/1/1900:1900:1";
-	push @date_tests, "c. 1901:1900:1";
-	push @date_tests, "c. 1905:1900:1";
-	push @date_tests, "c. 1906:1900:0";
-	push @date_tests, "1/1/1900:1901:0";
-	push @date_tests, "c. 1/15/1785:1787:1";
-
-	my @name_tests;
-	push @name_tests, "female:Jane Smith ():Jane Doe ():0";
-	push @name_tests, "female:Jane Smith (Doe):Jane Doe ():1";
-	push @name_tests, "female:Jane Doe (Smith):Jane Smith (Doe):0";
-	push @name_tests, "male:John Doe (foo):John Doe (bar):1";
-	push @name_tests, "male:John Smith (Doe):John Doe ():0";
-	push @name_tests, "female:margaret neville (pole):margaret ():1";
-	$index = 1;
-	foreach my $test (@name_tests) {
-		(my $gender, my $left_name, my $right_name, my $expected_result) = split(/:/, $test);
-		my $result = compareNames($gender, $left_name, $right_name, 1);
-		printDebug($DBG_PROGRESS,
-			sprintf("compareNames Test #%d: %s, %s, Left Name '%s', Right Name '%s', Result '%s'\n",
-				$index,
-				($result eq $expected_result) ? "PASSED" : "FAILED",
-				$gender,
-				$left_name,
-				$right_name,
-				$result ? "Names MATCHED" : "NAMES DID NOT MATCH"));
-		$index++;
-	}
-	print "\n";
-
-
-	$index = 1;
-	foreach my $test (@date_tests) {
-		(my $date1, my $date2, my $expected_result) = split(/:/, $test);
-		my $result = dateMatches($date1, $date2);
-		printDebug($DBG_PROGRESS,
-			sprintf("dateMatches Test #%d: %s, Date1 '%s', Date2 '%s', Result '%s'\n",
-				$index,
-				($result eq $expected_result) ? "PASSED" : "FAILED",
-				$date1,
-				$date2,
-				$result ? "DATES MATCHED" : "DATES DID NOT MATCH"));
-		$index++;
-	}
-	print "\n";
-
-	my @phonetics_tests;
-#	push @phonetics_tests, "williams:willliams";
-#	push @phonetics_tests, "walters:walton";
-#	push @phonetics_tests, "byron:bryon";
-#	push @phonetics_tests, "booth:boothe";
-#	push @phonetics_tests, "margaret:margery";
-#	push @phonetics_tests, "hepsibah:hepzibah";
-	$index = 1;
-	foreach my $test (@phonetics_tests) {
-		(my $left_name, my $right_name) = split(/:/, $test);
-		my $doubleM_result = doubleMetaphoneCompare($left_name, $right_name);
-		printDebug($DBG_PROGRESS,
-			sprintf("Phonetics Test #%d: Left Name '%s', Right Name '%s',  Double Metaphone %s\n",
-				$index,
-				$left_name,
-				$right_name,
-				$doubleM_result ? "MATCHED" : "DID NOT MATCH"));
-		$index++;
-	}
-	print "\n";
-}
-
 sub validateProfileID($) {
 	my $profile_id = shift;
 	if (!$profile_id || $profile_id !~ /^\d+$/) {
@@ -1959,9 +1873,6 @@ sub main() {
 		# Developer options, these are not listed in the help menu
 		} elsif ($ARGV[$i] eq "-api" || $ARGV[$i] eq "-api_get_limit") {
 			$env{'get_limit'} = $ARGV[++$i];
-
-		} elsif ($ARGV[$i] eq "-t" || $ARGV[$i] eq "-test") {
-			$env{'action'} = "test";
 
 		} elsif ($ARGV[$i] eq "-run_from_cgi") {
 			$run_from_cgi = 1;
@@ -2106,8 +2017,6 @@ sub main() {
 		validateProfileID($left_id);
 		checkPublic($left_id);
 
-	} elsif ($env{'action'} eq "test") {
-		runTestCases();
 	}
 
 	geniLogout();
