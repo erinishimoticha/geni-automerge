@@ -92,6 +92,8 @@ sub init(){
 	# http://www.geni.com/people/Alan-Sciascia/6000000009948172621#/tab/overview
 	$blacklist_managers{"6000000003753338015"} = 1;
 	$blacklist_managers{"6000000009948172621"} = 1;
+	$blacklist_managers{"6000000007167930983"} = 1;
+	$blacklist_managers{"6000000007190994696"} = 1;
 }
 
 
@@ -216,6 +218,7 @@ sub geniLogin() {
 	$m->cookie_jar(HTTP::Cookies->new());
 	my $result = new HTTP::Response;
 	$result = $m->post("https://www.geni.com/login/in?username=$env{'username'}&password=$env{'password'}");
+	updateGetHistory();
 
 	if (!$result->is_success || $result->decoded_content =~ /Welcome to Geni/i) {
 		printDebug($DBG_PROGRESS, "ERROR: Login FAILED for www.geni.com!!\n");
@@ -235,6 +238,22 @@ sub geniLogout() {
 	$m->get("http://www.geni.com/logout?ref=ph");
 }
 
+# Return TRUE if the json file queried a private profile
+sub jsonIsPrivate($) {
+	my $filename = shift;
+
+	open (INF,$filename);
+	my $json_data = <INF>;
+	close INF;
+
+	# Some profiles are private and we cannot access them
+	if ($json_data =~ /Access denied/i || $json_data =~ /SecurityError/i) {
+		printDebug($DBG_NONE, "NOTICE: Private profile in '$filename'\n");
+		return 1;
+	}
+
+	return 0;
+}
 sub jsonSanityCheck($) {
 	my $filename = shift;
 
@@ -246,12 +265,6 @@ sub jsonSanityCheck($) {
 	if ($json_data =~ /Rate limit exceeded/i) {
 		printDebug($DBG_PROGRESS, "ERROR: 'Rate limit exceeded' for '$filename'\n");
 		sleep(10);
-		return 0;
-	}
-
-	# Some profiles are private and we cannot access them
-	if ($json_data =~ /Access denied/i || $json_data =~ /SecurityError/i) {
-		printDebug($DBG_NONE, "NOTICE: Private profile in '$filename'\n");
 		return 0;
 	}
 
@@ -373,23 +386,6 @@ sub sleepIfNeeded() {
 				$gets_in_api_timeframe, $env{'get_timeframe'}, $sleep_length, $sleep_length > 1 ? "s" : ""));
 		sleep($sleep_length);
 	}
-}
-
-sub getPage($$) {
-	my $filename = shift;
-	my $url = shift;
-
-	if (-e "$filename") {
-		printDebug($DBG_IO, "getPage(cached): $url\n");
-		return;
-	}
-
-	geniLogin() if !$env{'logged_in'};
-	printDebug($DBG_IO, "getPage(fetch): $url\n");
-	sleepIfNeeded();
-	$m->get($url) || die "getPage($url) failed";
-	write_file($filename, $m->content(), 0);
-	updateGetHistory();
 }
 
 #
@@ -543,7 +539,6 @@ sub cleanupNameGuts($) {
 		$name = $` . " " . $';
 	}
 
-
 	# Treat the I in "Edgar I of England" differently from "Robert I. Smith"
 	# We want to remember the I/V/X that are abbreviations but remove the others.
 	$name =~ s/I\./ INITIAL_I /g;
@@ -561,9 +556,12 @@ sub cleanupNameGuts($) {
 	$name =~ s/\:/ /g;
 	$name =~ s/\,/ /g;
 	$name =~ s/\'/ /g;
+	$name =~ s/\"/ /g;
 	$name =~ s/\^/ /g;
 	$name =~ s/\// /g;
 	$name =~ s/\\/ /g;
+	$name =~ s/\[/ /g;
+	$name =~ s/\]/ /g;
 	$name =~ s/\(/ /g; # Note: If there were a ( and ) they would have already been removed
 	$name =~ s/\)/ /g; # but it is possible to have one or the other
 
@@ -586,7 +584,7 @@ sub cleanupNameGuts($) {
 
 				# Now do all of the single word phrases
 				"army", "navy", "usaf", "usmc",
-				"di", "de", "of", "av", "la", "le", "du", " - ", "the",
+				"di", "de", "of", "av", "la", "le", "du", "-", "the",
 				"daughter", "dau", "wife", "mr", "mrs", "miss", "dr", "son",
 				"duchess", "lord", "duke", "earl", "prince", "princess", "king", "queen", "baron",
 				"airman", "basic", "seaman", "fleet", "force", "ensign",
@@ -621,6 +619,7 @@ sub cleanupNameGuts($) {
 				"sir",
 				"specialist",
 				"staff",
+				"widow",
 				"unknown", "nn", "<unknown>", "unk", "unkf", "unkm");
 
 	# Remove double (or more) whitespaces
@@ -642,11 +641,17 @@ sub cleanupNameGuts($) {
 		while ($name =~ / $rm_string /i) {
 			$name = $` . " " . $';
 		}
+		if ($name eq $rm_string) {
+			$name = "";
+		}
 	}
 
 	$name =~ s/ INITIAL_I / I /g;
 	$name =~ s/ INITIAL_V / V /g;
 	$name =~ s/ INITIAL_X / X /g;
+	# If it says "jim or james" then string it together to look like one word.
+	# We'll break it apart later and compare each of the names.
+	$name =~ s/ or /_or_/g;
 
 	# Remove double (or more) whitespaces
 	while ($name =~ /\s\s/) {
@@ -766,6 +771,10 @@ sub compareNamesGuts($$$) {
 	if ($left_name =~ /\s/ || $right_name =~ /\s/) {
 		$compare_initials = 0;
 	}
+
+	# Replace the _or_ with a space so the names get split for the foreach loop below
+	$left_name =~ s/_or_/ /g;
+	$right_name =~ s/_or_/ /g;
 
 	# Again, this only happens for multiple middle names.  We compare all the middle
 	# names from the left profile with the middle names from the right profile. If
@@ -1049,15 +1058,70 @@ sub mergeURLHTML($$) {
 	return "<a href=\"http://www.geni.com/merge/compare/$id1?return=merge_center&to=$id2\">http://www.geni.com/merge/compare/$id1?return=merge_center&to=$id2</a>";
 }
 
+sub getPage($$) {
+	my $filename = shift;
+	my $url = shift;
+
+	if (-e "$filename") {
+		printDebug($DBG_IO, "getPage(cached): $url\n");
+		return;
+	}
+
+	geniLogin() if !$env{'logged_in'};
+	printDebug($DBG_IO, "getPage(fetch): $url\n");
+	sleepIfNeeded();
+	$m->get($url) || die "getPage($url) failed";
+	write_file($filename, $m->content(), 0);
+	updateGetHistory();
+}
+
+sub getJSON($$$$) {
+	my $filename	= shift;
+	my $url		= shift;
+	my $id1		= shift;
+	my $id2		= shift;
+
+	getPage($filename, $url);
+	if (jsonSanityCheck($filename) == 0) {
+		unlink $filename if $env{'delete_files'};
+		return 0;
+
+	# If one of the profiles involved is marked as private and we were
+	# able to convert it to public then download the json again.
+	} elsif (jsonIsPrivate($filename)) {
+		my $try_again = 0;
+		$try_again = 1 if ($id1 && checkPublic($id1));
+		$try_again = 1 if ($id2 && checkPublic($id2));
+		return 0 if (!$try_again);
+
+		unlink $filename;
+		getPage($filename, $url);
+		return 0 if (jsonSanityCheck($filename) == 0 || jsonIsPrivate($filename));
+	}
+
+	open (INF,$filename);
+	my $json_data = <INF>;
+	my $json = new JSON;
+	my $json_structure = $json->allow_nonref->relaxed->decode($json_data);
+	close INF;
+
+	printDebug($DBG_JSON, sprintf ("Pretty JSON:\n%s", $json->pretty->encode($json_structure))); 
+	return $json_structure;
+}
+
 sub compareProfiles($$) {
 	my $id1			= shift;
 	my $id2			= shift;
 	my $id1_url = "<a href=\"http://www.geni.com/people/id/$id1\">$id1</a>";
 	my $id2_url = "<a href=\"http://www.geni.com/people/id/$id2\">$id2</a>";
 
+	if (!$id1 || !$id2) {
+		printDebug($DBG_PROGRESS, "ERROR: compareProfiles was given an invalid id1 '$id1' or id2 '$id2'\n");
+		return 0;
+	}
 	my $profiles_url = "https://www.geni.com/api/profiles/compare/$id1,$id2";
 	my $filename = sprintf("$env{'datadir'}/%s-%s.json", $id1, $id2);
-	my $json_text = getJSON($filename, $profiles_url);
+	my $json_text = getJSON($filename, $profiles_url, $id1, $id2);
 	return 0 if (!$json_text);
 	printDebug($DBG_NONE, "\n\nComparing profile $id1_url to profile $id2_url\n");
 	printDebug($DBG_NONE, "Merge URL: " . mergeURLHTML($id1, $id2) . "\n");
@@ -1203,9 +1267,10 @@ sub mergeProfiles($$$$) {
 
 	geniLogin() if !$env{'logged_in'};
 	sleepIfNeeded();
-
 	my $result = new HTTP::Response;
 	$result = $m->post($merge_url_api);
+	updateGetHistory();
+
 	if ($result->is_success) {
 		(my $sec, my $min, my $hour, my $mday, my $mon, my $year, my $wday, my $yday, my $isdst) = localtime(time);
 		printDebug($DBG_PROGRESS, "MERGING: $id1 and $id2\n");
@@ -1254,15 +1319,32 @@ sub compareAllProfiles($$) {
 
 sub checkPublic($) {
 	my $profile_id	= shift;
-	return if (!$profile_id);
-	geniLogin() if !$env{'logged_in'};
+	return 0 if (!$profile_id);
 
+	if ($private_profiles{$profile_id}) {
+		printDebug($DBG_PROGRESS,
+			"PRIVATE_PROFILE: $profile_id is a known private profile\n");
+		return 0;
+	}
+
+	geniLogin() if !$env{'logged_in'};
+	sleepIfNeeded();
 	my $result = new HTTP::Response;
 	$result = $m->post("https://www.geni.com/api/profiles/check_public/$profile_id");
+	updateGetHistory();
 
-	return ($result->decoded_content =~ /true/ ? 1 : 0) if ($result->is_success);
-	printDebug($DBG_PROGRESS, sprintf("ERROR: checkPublic result failed '%s'\n", $result->status_line));
-	return 0;
+	my $profile_is_public = ($result->is_success && $result->decoded_content =~ /true/);
+	if ($profile_is_public) {
+		printDebug($DBG_PROGRESS,
+			"PRIVATE_PROFILE: $profile_id was converted from private to public\n");
+	} else {
+		printDebug($DBG_PROGRESS,
+			"PRIVATE_PROFILE: $profile_id could not be converted from private to public\n");
+		$private_profiles{$profile_id} = 1;
+		write_file($env{'private_profiles'}, "$profile_id\n", 1);
+	}
+
+	return $profile_is_public;
 }
 
 sub analyzeTreeConflict($$) {
@@ -1284,7 +1366,7 @@ sub analyzeTreeConflict($$) {
 	my @sisters;
 	my $filename = "$env{'datadir'}/$profile_id\.json";
 	my $url = "https://www.geni.com/api/profiles/immediate_family/$profile_id";
-	my $json_profile = getJSON($filename, $url);
+	my $json_profile = getJSON($filename, $url, $profile_id, 0);
 	return 0 if (!$json_profile);
 
 	jsonToFamilyArrays($json_profile, $profile_id, 0, \@fathers, \@mothers, \@spouses, \@sons, \@daughters, \@brothers, \@sisters);
@@ -1447,7 +1529,7 @@ sub analyzeTreeConflictRecursive($) {
 
 	my $filename = "$env{'datadir'}/$profile_id\.json";
 	my $url = "https://www.geni.com/api/profiles/immediate_family/$profile_id";
-	my $json_profile = getJSON($filename, $url);
+	my $json_profile = getJSON($filename, $url, $profile_id, 0);
 	return 0 if (!$json_profile);
 
 	# Then build arrays of all the immediate family members of the starting profile
@@ -1547,7 +1629,7 @@ sub rangeBeginEnd($$$$) {
 			$api_action,
 			$env{'all_of_geni'} ? "&all=true" : "");
 
-	my $json_page = getJSON($filename, $url);
+	my $json_page = getJSON($filename, $url, 0, 0);
 	my $conflict_count = $json_page->{'count'};
 	my $max_page = roundup($conflict_count/50);
 	printDebug($DBG_PROGRESS,
@@ -1574,25 +1656,6 @@ sub rangeBeginEnd($$$$) {
 	printDebug($DBG_PROGRESS, "Page Range $range_end -> $range_begin\n");
 
 	return ($range_begin, $range_end);
-}
-
-sub getJSON ($$) {
-	my $filename	= shift;
-	my $url		= shift;
-
-	getPage($filename, $url);
-	if (jsonSanityCheck($filename) == 0) {
-		unlink $filename if $env{'delete_files'};
-		return 0;
-	}
-	open (INF,$filename);
-	my $json_data = <INF>;
-	my $json = new JSON;
-	my $json_structure = $json->allow_nonref->relaxed->decode($json_data);
-	close INF;
-
-	printDebug($DBG_JSON, sprintf ("Pretty JSON:\n%s", $json->pretty->encode($json_structure))); 
-	return $json_structure;
 }
 
 sub apiURL($$$) {
@@ -1645,7 +1708,7 @@ sub traverseJSONPages($$$$) {
 	($range_begin, $range_end) = rangeBeginEnd($range_begin, $range_end, $type, $api_action);
 	my $filename = "$env{'datadir'}/$api_action\_$range_end\.json";
 	my $url = apiURL($api_action, $range_end, $focus_id);
-	my $json_page = getJSON($filename, $url);
+	my $json_page = getJSON($filename, $url, 0, 0);
 	return 0 if (!$json_page);
 
 	my $next_url = "";
@@ -1663,7 +1726,7 @@ sub traverseJSONPages($$$$) {
 		my $loop_start_time = time();
 		my $page_profile_count = 0;
 		my $filename = "$env{'datadir'}/$api_action\_$page.json";
-		my $json_page = getJSON($filename, $url);
+		my $json_page = getJSON($filename, $url, 0, 0);
 		$url = $next_url;
 		next if (!$json_page);
 
@@ -1673,30 +1736,8 @@ sub traverseJSONPages($$$$) {
 			printDebug($DBG_PROGRESS, "Page $page/$range_end: Profile $page_profile_count: Overall Profile $env{'profiles'}\n");
 		
 			if ($type eq "PENDING_MERGES") {
-				my $public_profiles = 1;
-				foreach my $private_ID (@{$json_list_entry->{'private'}}) {
-					$private_ID =~ /profiles\/(\d+)$/;
-					$private_ID = $1;
-					if ($private_profiles{$private_ID}) {
-						$public_profiles = 0;
-						printDebug($DBG_PROGRESS,
-							"PRIVATE_PROFILE: $private_ID is a known private profile\n");
-					} elsif (checkPublic($private_ID)) {
-						printDebug($DBG_PROGRESS,
-							"PRIVATE_PROFILE: $private_ID was converted from private to public\n");
-					} else {
-						printDebug($DBG_PROGRESS,
-							"PRIVATE_PROFILE: $private_ID could not be converted from private to public\n");
-						$public_profiles = 0;
-						$private_profiles{$private_ID} = 1;
-						write_file($env{'private_profiles'}, "$private_ID\n", 1);
-					}
-				}
-
-				if ($public_profiles)  {
-					$json_list_entry->{'profiles'} =~ /\/(\d+),(\d+)$/;
-					analyzePendingMerge($1, $2);
-				}
+				$json_list_entry->{'profiles'} =~ /\/(\d+),(\d+)$/;
+				analyzePendingMerge($1, $2);
 			} elsif ($type eq "TREE_CONFLICTS") {
 				my $conflict_type = $json_list_entry->{'issue_type'};
 				if ($conflict_type eq "parent") {
