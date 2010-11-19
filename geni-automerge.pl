@@ -1122,7 +1122,7 @@ sub compareProfiles($$) {
 		printDebug($DBG_PROGRESS, "ERROR: compareProfiles was given an invalid id1 '$id1' or id2 '$id2'\n");
 		return 0;
 	}
-	my $profiles_url = "https://www.geni.com/api/profiles/compare/$id1,$id2";
+	my $profiles_url = "https://www.geni.com/api/profiles/compare/$id1,$id2?only_ids=true";
 	my $filename = sprintf("$env{'datadir'}/%s-%s.json", $id1, $id2);
 	my $json_text = getJSON($filename, $profiles_url, $id1, $id2);
 	return 0 if (!$json_text);
@@ -1375,7 +1375,7 @@ sub analyzeTreeConflict($$) {
 	my @brothers;
 	my @sisters;
 	my $filename = "$env{'datadir'}/$profile_id\.json";
-	my $url = "https://www.geni.com/api/profiles/immediate_family/$profile_id";
+	my $url = "https://www.geni.com/api/profiles/immediate_family/$profile_id?only_ids=true";
 	my $json_profile = getJSON($filename, $url, $profile_id, 0);
 	return 0 if (!$json_profile);
 
@@ -1538,7 +1538,7 @@ sub analyzeTreeConflictRecursive($) {
 	my @sisters;
 
 	my $filename = "$env{'datadir'}/$profile_id\.json";
-	my $url = "https://www.geni.com/api/profiles/immediate_family/$profile_id";
+	my $url = "https://www.geni.com/api/profiles/immediate_family/$profile_id?only_ids=true";
 	my $json_profile = getJSON($filename, $url, $profile_id, 0);
 	return 0 if (!$json_profile);
 
@@ -1674,7 +1674,7 @@ sub apiURL($$$) {
 	my $focus_id	= shift;
 
 	# pass "only_ids=true" when they get the API fixed
-	return sprintf("https://www.geni.com/api/profiles/%s?%s&order=last_modified_at&direction=%s&page=%s%s",
+	return sprintf("https://www.geni.com/api/profiles/%s?%s&only_ids=true&order=last_modified_at&direction=%s&page=%s%s",
 			$api_action,
 			$focus_id ? "focus_id=$focus_id" : "collaborators=true",
 			$env{'direction'},
@@ -1746,8 +1746,11 @@ sub traverseJSONPages($$$$) {
 			printDebug($DBG_PROGRESS, "Page $page/$range_end: Profile $page_profile_count: Overall Profile $env{'profiles'}\n");
 		
 			if ($type eq "PENDING_MERGES") {
-				$json_list_entry->{'profiles'} =~ /\/(\d+),(\d+)$/;
-				analyzePendingMerge($1, $2);
+				foreach my $private_ID (@{$json_list_entry->{'private'}}) {
+					checkPublic($private_ID);
+				}
+
+				analyzePendingMerge($json_list_entry->{'profiles'}->[0], $json_list_entry->{'profiles'}->[1]);
 			} elsif ($type eq "TREE_CONFLICTS") {
 				my $conflict_type = $json_list_entry->{'issue_type'};
 				if ($conflict_type eq "parent") {
