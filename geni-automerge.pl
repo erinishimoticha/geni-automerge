@@ -36,7 +36,7 @@ sub init(){
 	# configuration
 	$env{'circa_range'}		= 5;
 	$env{'get_timeframe'}		= 10;
-	$env{'get_limit'}		= 18; # Amos has the limit set to 20 so we'll use 18 to have some breathing room
+	$env{'get_limit'}		= 19; # Amos has the limit set to 20 so we'll use 18 to have some breathing room
 	$env{'action'}			= "pending_merges";
 
 	# environment
@@ -1167,17 +1167,24 @@ sub compareProfiles($$) {
 		}
 
 		# They keep changing the format for how they list managers :( 
-		# Make this work for the old and new format and bail out if
-		# they change it again.
-		my @managers;
-		foreach my $manager_line (@{$json_profile->{'focus'}->{'managers'}}) {
-			if ($manager_line =~ /profiles\/(.*)$/) { 
-				push @managers, split(/,/, $1);
-			} elsif ($manager_line =~ /^(\d+)$/) {
-				push @managers, $1;
-			} else {
-				gracefulExit("ERROR: Manager line '$manager_line' is invalid\n");
-			}
+		# Make this work for the old and new format and bail out if 
+		# they change it again. 
+		my @managers; 
+		if(ref($json_profile->{'focus'}->{'managers'}) eq "ARRAY") { #arrayref 
+			foreach my $manager_line (@{$json_profile->{'focus'}->{'managers'}}) { 
+				if ($manager_line =~ /profiles\/(.*)$/) { 
+					push @managers, split(/,/, $1); 
+				} elsif ($manager_line =~ /^(\d+)$/) { 
+					push @managers, $1; 
+				} else { 
+					gracefulExit("ERROR: Manager line '$manager_line' is invalid.\n"); 
+				} 
+			} 
+		}elsif(ref($json_profile->{'focus'}->{'managers'}) eq 'SCALAR'){ 
+			my @a = split(/\D+/,$$json_profile->{'focus'}->{'managers'}); 
+			foreach(@a){ 
+				if(length($_) > 5){ push @managers, $_; } 
+			} 
 		}
 
 		# Do not merge a profile managed by any of the blacklist_managers
