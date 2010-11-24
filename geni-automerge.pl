@@ -1280,9 +1280,9 @@ sub mergeProfiles($$$$) {
 	my $result = new HTTP::Response;
 	$result = $m->post($merge_url_api);
 	updateGetHistory();
+	(my $sec, my $min, my $hour, my $mday, my $mon, my $year, my $wday, my $yday, my $isdst) = localtime(time);
 
 	if ($result->is_success) {
-		(my $sec, my $min, my $hour, my $mday, my $mon, my $year, my $wday, my $yday, my $isdst) = localtime(time);
 		printDebug($DBG_PROGRESS, "MERGING: $id1 and $id2\n");
 		write_file($env{'merge_log_file'},
 				sprintf("%4d-%02d-%02d %02d:%02d:%02d :: %s :: %s :: Merged %s with %s\n",
@@ -1291,8 +1291,13 @@ sub mergeProfiles($$$$) {
 		$env{'matches'}++;
 		$new_tree_conflicts{$id1} = 1;
 	} else {
-		printDebug($DBG_PROGRESS, "MERGE FAILED: $id1 and $id2\n");
-		write_file($env{'merge_fail_file'}, "Failed merge for $id1_url with $id2_url\n", 1);
+		my $fail_string = sprintf("MERGE FAILED for %s at %4d-%02d-%02d %02d:%02d:%02d by %s. Failure reason '%s'\n",
+					mergeURLHTML($id1, $id2),
+                                        $year+1900, $mon+1, $mday, $hour, $min, $sec,
+                                        $env{'username'},
+					$result->decoded_content);
+		printDebug($DBG_PROGRESS, "MERGE FAILED for $id1 and $id2\n");
+		write_file($env{'merge_fail_file'}, $fail_string, 1);
 	}
 	updateGetHistory();
 }
@@ -1937,6 +1942,7 @@ sub main() {
 	(mkdir $env{'datadir'}, 0755) if !(-e $env{'datadir'});
 	(mkdir $env{'logdir'}, 0755) if !(-e $env{'logdir'});
 	write_file($env{'log_file'}, "<pre>", 0);
+	write_file($env{'merge_fail_file'}, "<pre>", 0) if !(-e $env{'merge_fail_file'}),
 
 	open(FH, $env{'private_profiles'});
 	while (<FH>) {
