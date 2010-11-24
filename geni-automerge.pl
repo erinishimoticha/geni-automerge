@@ -1313,11 +1313,11 @@ sub compareAllProfiles($$) {
 	my $match_count = 0;
 
 	for (my $i = 0; $i <= $#profiles_array; $i++) {
-		printDebug($DBG_NONE, "OUTSIDE LOOP: $i => $profiles_array[$i]\n");
+		#printDebug($DBG_NONE, "OUTSIDE LOOP: $i => $profiles_array[$i]\n");
 		(my $i_id, my $i_name, my $gender) = split(/:/, $profiles_array[$i]);
 
 		for (my $j = $i + 1; $j <= $#profiles_array; $j++) {
-			printDebug($DBG_NONE, "INSIDE LOOP: $j => $profiles_array[$j]\n");
+			#printDebug($DBG_NONE, "INSIDE LOOP: $j => $profiles_array[$j]\n");
 			(my $j_id, my $j_name, my $gender) = split(/:/, $profiles_array[$j]);
 			if (compareNames($gender, $i_name, $j_name, 0)) {
 				if (compareProfiles($i_id, $j_id)) {
