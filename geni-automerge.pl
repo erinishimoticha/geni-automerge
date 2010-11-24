@@ -27,6 +27,7 @@ my $DBG_NAMES			= "DBG_NAMES";
 my $DBG_JSON			= "DBG_JSON";
 my $DBG_MATCH_DATE		= "DBG_MATCH_DATE";
 my $DBG_MATCH_BASIC		= "DBG_MATCH_BASIC";
+my $DBG_TIME			= "DBG_TIME";
 
 our $CALLED_BY_TEST_SCRIPT;
 
@@ -61,6 +62,7 @@ sub init(){
 	$debug{"file_" . $DBG_JSON}		= 0;
 	$debug{"file_" . $DBG_MATCH_BASIC}	= 1;
 	$debug{"file_" . $DBG_MATCH_DATE}	= 1;
+	$debug{"file_" . $DBG_TIME}		= 0;
 	$debug{"console_" . $DBG_NONE}		= 0;
 	$debug{"console_" . $DBG_PROGRESS}	= 1;
 	$debug{"console_" . $DBG_IO}		= 0;
@@ -69,6 +71,7 @@ sub init(){
 	$debug{"console_" . $DBG_JSON}		= 0;
 	$debug{"console_" . $DBG_MATCH_BASIC}	= 0;
 	$debug{"console_" . $DBG_MATCH_DATE}	= 0;
+	$debug{"console_" . $DBG_TIME}		= 0;
 
 	struct (profile => {
 		name_first		=> '$',
@@ -225,7 +228,7 @@ sub geniLogin() {
 	$m->cookie_jar(HTTP::Cookies->new());
 	my $result = new HTTP::Response;
 	$result = $m->post("https://www.geni.com/login/in?username=$env{'username'}&password=$env{'password'}");
-	updateGetHistory();
+	updateGetHistory("geniLogin");
 
 	if (!$result->is_success || $result->decoded_content =~ /Welcome to Geni/i) {
 		printDebug($DBG_PROGRESS, "ERROR: Login FAILED for www.geni.com!!\n");
@@ -385,10 +388,10 @@ sub sleepIfNeeded() {
 		my $sleep_length = $env{'get_timeframe'} - $new_to_old_delta;
 
 		if (!$sleep_length) {
-			printDebug($DBG_PROGRESS, "ERROR: sleep_length was 0.  Using $env{'get_timeframe'} instead\n");
+			printDebug($DBG_TIME, "ERROR: sleep_length was 0.  Using $env{'get_timeframe'} instead\n");
 			$sleep_length = $env{'get_timeframe'};
 		}
-		printDebug($DBG_PROGRESS,
+		printDebug($DBG_TIME,
 			sprintf("%d gets() in the past %d seconds....sleeping for %d second%s\n",
 				$gets_in_api_timeframe, $env{'get_timeframe'}, $sleep_length, $sleep_length > 1 ? "s" : ""));
 		sleep($sleep_length);
@@ -1079,7 +1082,7 @@ sub getPage($$) {
 	sleepIfNeeded();
 	$m->get($url) || die "getPage($url) failed";
 	write_file($filename, $m->content(), 0);
-	updateGetHistory();
+	updateGetHistory("getPage");
 }
 
 sub getJSON($$$$) {
@@ -1130,7 +1133,7 @@ sub compareProfiles($$) {
 	my $filename = sprintf("$env{'datadir'}/%s-%s.json", $id1, $id2);
 	my $json_text = getJSON($filename, $profiles_url, $id1, $id2);
 	return 0 if (!$json_text);
-	printDebug($DBG_NONE, "\n\nComparing profile $id1_url to profile $id2_url\n");
+	printDebug($DBG_NONE, "\nComparing profile $id1_url to profile $id2_url\n");
 
 	my $left_profile = new profile;
 	my $right_profile= new profile;
@@ -1265,9 +1268,11 @@ sub compareProfiles($$) {
 #
 # Update the get_history file with the current timestamp
 #
-sub updateGetHistory() {
+sub updateGetHistory($) {
+	my $caller = shift;
 	(my $time_sec, my $time_usec) = Time::HiRes::gettimeofday();
 	push @get_history, "$time_sec.$time_usec\n";
+	printDebug($DBG_TIME, "updateGetHistory for $caller: $time_sec.$time_usec\n");
 }
 
 sub mergeProfiles($$$$) {
@@ -1282,11 +1287,11 @@ sub mergeProfiles($$$$) {
 	sleepIfNeeded();
 	my $result = new HTTP::Response;
 	$result = $m->post($merge_url_api);
-	updateGetHistory();
+	updateGetHistory("mergeProfiles");
 	(my $sec, my $min, my $hour, my $mday, my $mon, my $year, my $wday, my $yday, my $isdst) = localtime(time);
 
 	if ($result->is_success) {
-		printDebug($DBG_PROGRESS, "MERGING: $id1 and $id2\n");
+		printDebug($DBG_PROGRESS, ": MERGING $id1 and $id2\n");
 		write_file($env{'merge_log_file'},
 				sprintf("%4d-%02d-%02d %02d:%02d:%02d :: %s :: %s :: Merged %s with %s\n",
  					$year+1900, $mon+1, $mday, $hour, $min, $sec,
@@ -1299,10 +1304,9 @@ sub mergeProfiles($$$$) {
                                         $year+1900, $mon+1, $mday, $hour, $min, $sec,
                                         $env{'username'},
 					$result->decoded_content);
-		printDebug($DBG_PROGRESS, "MERGE FAILED for $id1 and $id2\n");
+		printDebug($DBG_PROGRESS, ": MERGE FAILED for $id1 and $id2\n");
 		write_file($env{'merge_fail_file'}, $fail_string, 1);
 	}
-	updateGetHistory();
 }
 
 sub compareAllProfiles($$) {
@@ -1342,8 +1346,8 @@ sub checkPublic($) {
 	return 0 if (!$profile_id);
 
 	if ($private_profiles{$profile_id}) {
-		printDebug($DBG_PROGRESS,
-			"PRIVATE_PROFILE: $profile_id is a known private profile\n");
+		printDebug($DBG_NONE,
+			"\nPRIVATE_PROFILE: $profile_id is a known private profile\n");
 		return 0;
 	}
 
@@ -1351,15 +1355,15 @@ sub checkPublic($) {
 	sleepIfNeeded();
 	my $result = new HTTP::Response;
 	$result = $m->post("https://www.geni.com/api/profiles/check_public/$profile_id");
-	updateGetHistory();
+	updateGetHistory("checkPublic");
 
 	my $profile_is_public = ($result->is_success && $result->decoded_content =~ /true/);
 	if ($profile_is_public) {
-		printDebug($DBG_PROGRESS,
-			"PRIVATE_PROFILE: $profile_id was converted from private to public\n");
+		printDebug($DBG_NONE,
+			"\nPRIVATE_PROFILE: $profile_id was converted from private to public\n");
 	} else {
-		printDebug($DBG_PROGRESS,
-			"PRIVATE_PROFILE: $profile_id could not be converted from private to public\n");
+		printDebug($DBG_NONE,
+			"\nPRIVATE_PROFILE: $profile_id could not be converted from private to public\n");
 		$private_profiles{$profile_id} = 1;
 		write_file($env{'private_profiles'}, "$profile_id\n", 1);
 	}
@@ -1600,6 +1604,8 @@ sub analyzePendingMerge($$) {
 
 	if (compareProfiles($id1, $id2)) {
 		mergeProfiles("https://www.geni.com/api/profiles/merge/$id1,$id2", $id1, $id2, "PENDING_MERGE");
+	} else {
+		printDebug($DBG_PROGRESS, ": NOT A MATCH\n");
 	}
 }
 
@@ -1753,7 +1759,7 @@ sub traverseJSONPages($$$$) {
 		foreach my $json_list_entry (@{$json_page->{'results'}}) {
 			$env{'profiles'}++;
 			$page_profile_count++;
-			printDebug($DBG_PROGRESS, "Page $page/$range_end: Profile $page_profile_count: Overall Profile $env{'profiles'}\n");
+			printDebug($DBG_PROGRESS, "Page $page/$range_end: Profile $page_profile_count: Overall Profile $env{'profiles'}");
 		
 			if ($type eq "PENDING_MERGES") {
 				foreach my $private_ID (@{$json_list_entry->{'private'}}) {
@@ -1790,10 +1796,10 @@ sub traverseJSONPages($$$$) {
 				int($loop_run_time/3600),
 				int(($loop_run_time % 3600) / 60),
 			int($loop_run_time % 60)));
-		printDebug($DBG_PROGRESS, "$env{'matches'} matches out of $env{'profiles'} profiles so far\n");
+		printDebug($DBG_PROGRESS, "$env{'matches'} matches out of $env{'profiles'} profiles so far\n\n");
 	}
 
-	printDebug($DBG_PROGRESS, "$env{'matches'} matches out of $env{'profiles'} profiles\n");
+	printDebug($DBG_PROGRESS, "$env{'matches'} matches out of $env{'profiles'} profiles\n\n");
 }
 
 sub validateProfileID($) {
