@@ -13,6 +13,9 @@ use Text::DoubleMetaphone qw( double_metaphone );
 use IO::Socket::SSL;
 use HTTP::Response;
 
+binmode STDOUT, ":utf8";
+binmode STDERR, ":utf8";
+
 # globals and constants
 my (%env, %debug, %blacklist_managers, @get_history, %private_profiles, %new_tree_conflicts);
 my $m = WWW::Mechanize->new(autocheck => 0);
@@ -36,7 +39,7 @@ sub init(){
 	# configuration
 	$env{'circa_range'}		= 5;
 	$env{'get_timeframe'}		= 10;
-	$env{'get_limit'}		= 19; # Amos has the limit set to 20 so we'll use 18 to have some breathing room
+	$env{'get_limit'}		= 39; # Amos has the limit set to 20 so we'll use 18 to have some breathing room
 	$env{'action'}			= "pending_merges";
 
 	# environment
@@ -170,6 +173,7 @@ sub write_file($$$){
 	    return;
 	}
 	open(OUT,"$append$file") || gracefulExit("\n\nERROR: write_file could not open '$file'\n\n");
+	binmode OUT, ":utf8";
 	while(!(flock OUT, 2)){}
 	print OUT $data;
 	flock OUT, 8; # unlock
@@ -1058,7 +1062,7 @@ sub avoidDuplicatesPush($$$) {
 sub mergeURLHTML($$) {
 	my $id1			= shift;
 	my $id2			= shift;
-	return "<a href=\"http://www.geni.com/merge/compare/$id1?return=merge_center&to=$id2\">http://www.geni.com/merge/compare/$id1?return=merge_center&to=$id2</a>";
+	return "<a href=\"http://www.geni.com/merge/compare/$id1?to=$id2\">$id1 and $id2</a>";
 }
 
 sub getPage($$) {
@@ -1127,7 +1131,6 @@ sub compareProfiles($$) {
 	my $json_text = getJSON($filename, $profiles_url, $id1, $id2);
 	return 0 if (!$json_text);
 	printDebug($DBG_NONE, "\n\nComparing profile $id1_url to profile $id2_url\n");
-	printDebug($DBG_NONE, "Merge URL: " . mergeURLHTML($id1, $id2) . "\n");
 
 	my $left_profile = new profile;
 	my $right_profile= new profile;
@@ -1310,9 +1313,11 @@ sub compareAllProfiles($$) {
 	my $match_count = 0;
 
 	for (my $i = 0; $i <= $#profiles_array; $i++) {
+		printDebug($DBG_NONE, "OUTSIDE LOOP: $i => $profiles_array[$i]\n");
 		(my $i_id, my $i_name, my $gender) = split(/:/, $profiles_array[$i]);
 
 		for (my $j = $i + 1; $j <= $#profiles_array; $j++) {
+			printDebug($DBG_NONE, "INSIDE LOOP: $j => $profiles_array[$j]\n");
 			(my $j_id, my $j_name, my $gender) = split(/:/, $profiles_array[$j]);
 			if (compareNames($gender, $i_name, $j_name, 0)) {
 				if (compareProfiles($i_id, $j_id)) {
