@@ -1294,7 +1294,7 @@ sub mergeProfiles($$$$) {
 		$env{'matches'}++;
 		$new_tree_conflicts{$id1} = 1;
 	} else {
-		my $fail_string = sprintf("MERGE FAILED for %s at %4d-%02d-%02d %02d:%02d:%02d by %s. Failure reason '%s'\n",
+		my $fail_string = sprintf("MERGE FAILED for %s at %4d-%02d-%02d %02d:%02d:%02d by %s. Failure reason '%s'<br />\n",
 					mergeURLHTML($id1, $id2),
                                         $year+1900, $mon+1, $mday, $hour, $min, $sec,
                                         $env{'username'},
