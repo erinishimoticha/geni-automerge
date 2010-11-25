@@ -549,6 +549,11 @@ sub cleanupNameGuts($) {
 		$name = $` . " " . $';
 	}
 
+	# Remove everything in //s
+	while ($name =~ /\/.*?\//) {
+		$name = $` . " " . $';
+	}
+
 	# Treat the I in "Edgar I of England" differently from "Robert I. Smith"
 	# We want to remember the I/V/X that are abbreviations but remove the others.
 	$name =~ s/I\./ INITIAL_I /g;
@@ -1635,7 +1640,7 @@ sub stackProfiles($$) {
 			printDebug($DBG_PROGRESS, "ERROR: '$id' is not a valid profile ID\n");
 		}
 		my $id_url = "<a href=\"http://www.geni.com/people/id/$id\">$id</a>";
-		printDebug($DBG_PROGRESS, "\nStacking Primary $primary_id: Stacking Secondary $id\n");
+		printDebug($DBG_PROGRESS, "\nStacking Primary $primary_id: Stacking Secondary $id");
 		printDebug($DBG_NONE, "\nStacking Primary $primary_url: Stacking Secondary $id_url\n");
 		mergeProfiles("https://www.geni.com/api/profiles/merge/$primary_id,$id", $primary_id, $id, "STACKING_MERGE");
 	}
@@ -1815,8 +1820,8 @@ sub main() {
 	$env{'password'}	= "";
 	my $range_begin		= 0;
 	my $range_end		= 0;
-	my $left_id		= 0;
-	my $right_id		= 0;
+	my $left_id		= "";
+	my $right_id		= "";
 	my $run_from_cgi	= 0;
 
 	#
@@ -1903,6 +1908,11 @@ sub main() {
 		} elsif ($ARGV[$i] eq "-run_from_cgi") {
 			$run_from_cgi = 1;
 
+		} elsif ($ARGV[$i] eq "-focal") {
+			$env{'action'} = "focal";
+			$left_id = $ARGV[++$i];
+			$right_id = $ARGV[++$i];
+
 		# This is used if you want to loop through the most recent merges over and over.
 		# So "-loop -desc -rb 1 -re 50" will loop through the first 50 pages of merge
 		# issues over and over again.  These are likely to be merge issues from the past
@@ -1952,8 +1962,8 @@ sub main() {
 
 	(mkdir $env{'datadir'}, 0755) if !(-e $env{'datadir'});
 	(mkdir $env{'logdir'}, 0755) if !(-e $env{'logdir'});
-	write_file($env{'log_file'}, "<pre>", 0);
-	write_file($env{'merge_fail_file'}, "<pre>", 0) if !(-e $env{'merge_fail_file'}),
+	write_file($env{'log_file'}, "<html><head><meta http-equiv=\"refresh\" content=\"60\"></head><pre>\n", 0);
+	write_file($env{'merge_fail_file'}, "<html><head><title>geni-automerge Failed Merges</title></head><pre>", 0) if !(-e $env{'merge_fail_file'}),
 
 	open(FH, $env{'private_profiles'});
 	while (<FH>) {
@@ -2040,6 +2050,15 @@ sub main() {
 		validateProfileID($left_id);
 		analyzeDataConflict($left_id);
 
+	} elsif ($env{'action'} eq "focal") {
+		validateProfileID($left_id);
+		stackProfiles($left_id, $right_id);
+		analyzeTreeConflict($left_id, "parent");
+		analyzeTreeConflict($left_id, "siblings");
+		analyzeTreeConflict($left_id, "partner");
+		analyzeTreeConflict($left_id, "children");
+		analyzeTreeConflictRecursive($left_id);
+
 	} elsif ($env{'action'} eq "check_public") {
 		validateProfileID($left_id);
 		checkPublic($left_id);
@@ -2054,7 +2073,8 @@ sub main() {
 			int($run_time/3600),
 			int(($run_time % 3600) / 60),
 			int($run_time % 60)));
-
+	write_file($env{'log_file'}, "\n\nFINISHED!</html></pre>\n", 1);
+	write_file($env{'merge_fail_file'}, "</html></pre>\n", 1);
 }
 
 1;
