@@ -1930,9 +1930,17 @@ sub main() {
 		}
 	}
 
+	$env{'default_login'} 	= "default_login.txt";
 	if ($env{'username'} eq "") {
-		print "username: ";
-		$env{'username'} = <STDIN>;
+		if (-e $env{'default_login'}) {
+			open (INF, $env{'default_login'}) or die("ERROR: can't open $env{'default_login'}");
+			$env{'username'} = <INF>;
+			$env{'password'} = <INF>;
+			close INF;
+		} else {
+			print "username: ";
+			$env{'username'} = <STDIN>;
+		}
 	}
 
 	$env{'username'}	=~ /^(.*)\@/;
