@@ -690,6 +690,75 @@ sub cleanupNameGuts($) {
 	return join(" ", @final_name);
 }
 
+sub nameToFirstMiddleLastMaiden($) {
+	my $name = shift;
+	my $name_first	= "";
+	my $name_middle	= "";
+	my $name_last	= "";
+	my $name_maiden	= "";
+
+	if ($name =~ / \((.*)\)$/) {
+		$name_maiden = $1;
+		$name = $`;
+	}
+
+	if ($name =~ /^(.*?)\s(.*)\s(.*?)$/) {
+		$name_first = $1;
+		$name_middle = $2;
+		$name_last= $3;
+	} elsif ($name =~ /^(.*?)\s(.*?)$/) {
+		$name_first = $1;
+		$name_last= $2;
+	} elsif ($name =~ /^(.*?)$/) {
+		$name_first = $1;
+	# This should not happen
+	} else {
+		$name_first = $name;
+	}
+
+	return ($name_first, $name_middle, $name_last, $name_maiden);
+}
+
+sub getMaleLastNames($) {
+	my $profile_id = shift;
+
+	my $filename = "$env{'datadir'}/$profile_id\.json";
+	my $url = "https://www.geni.com/api/profiles/immediate_family/$profile_id?only_ids=true";
+	my $json_profile = getJSON($filename, $url, $profile_id, 0);
+	return "" if (!$json_profile);
+
+	my @fathers, my @mothers, my @spouses, my @sons, my @daughters, my @brothers, my @sisters;
+	jsonToFamilyArrays($json_profile, $profile_id, \@fathers, \@mothers, \@spouses, \@sons, \@daughters, \@brothers, \@sisters);
+
+	# If the last names of all fathers are the same then return that name.
+	# If there is any disagreement return "".
+	my $father_last_name = "";
+	foreach my $father_string (@fathers) {
+		(my $id, my $name, my $gender) = split(/:/, $father_string);
+		(my $first, my $middle, my $last, my $maiden) = nameToFirstMiddleLastMaiden($name);
+		if ($father_last_name ne "" && $father_last_name ne $last) {
+			$father_last_name = "";
+			last;
+		}
+		$father_last_name = $last;
+	}
+
+	# If the last names of all husbands are the same then return that name.
+	# If there is any disagreement return "".
+	my $husband_last_name = "";
+	foreach my $husband_string (@spouses) {
+		(my $id, my $name, my $gender) = split(/:/, $husband_string);
+		(my $first, my $middle, my $last, my $maiden) = nameToFirstMiddleLastMaiden($name);
+		if ($husband_last_name ne "" && $husband_last_name ne $last) {
+			$husband_last_name = "";
+			last;
+		}
+		$husband_last_name = $last;
+	}
+	
+	return ($father_last_name, $husband_last_name);
+}
+
 #
 # Construct names consistently 
 #
@@ -805,12 +874,38 @@ sub compareNamesGuts($$$) {
 	return 0;
 }
 
+sub updateLastMaidenNames($$$) {
+	my $name_last	= shift;
+	my $name_maiden	= shift;
+	my $profile_id	= shift;
+
+	(my $father_last_name, my $husband_last_name) = getMaleLastNames($profile_id);
+
+	if ($husband_last_name && $husband_last_name ne $name_last) {
+		if ($name_maiden eq "") {
+			printDebug($DBG_NAMES, "Changing maiden name from '' to '$name_last'\n");
+			$name_maiden = $name_last;
+		}
+		printDebug($DBG_NAMES, "Changing last name from '$name_last' to '$husband_last_name'\n");
+		$name_last = $husband_last_name;
+	}
+
+	if ($father_last_name && (!$name_maiden || $name_maiden eq $husband_last_name)) {
+		printDebug($DBG_NAMES, "Changing maiden name from '$name_maiden' to '$father_last_name'\n");
+		$name_maiden = $father_last_name;
+	}
+
+	return ($name_last, $name_maiden);
+}
+
 # Return TRUE if they match
-sub compareNames($$$$) {
-	my $gender	= shift;
-	my $left_name	= shift;
-	my $right_name	= shift;
-	my $debug	= shift;
+sub compareNames($$$$$$) {
+	my $gender		= shift;
+	my $left_name		= shift;
+	my $left_profile_id	= shift;
+	my $right_name		= shift;
+	my $right_profile_id	= shift;
+	my $debug		= shift;
 
 	if ($left_name eq $right_name) {
 		printDebug($DBG_NONE,
@@ -823,52 +918,18 @@ sub compareNames($$$$) {
 	# It one name is blank then be conservative and return false
 	return 0 if (!$left_name || !$right_name);
 
-	my $left_name_first	= "";
-	my $left_name_middle	= "";
-	my $left_name_last	= "";
-	my $left_name_maiden	= "";
+	(my $left_name_first, my $left_name_middle, my $left_name_last, my $left_name_maiden) = nameToFirstMiddleLastMaiden($left_name); 
+	(my $right_name_first, my $right_name_middle, my $right_name_last, my $right_name_maiden) = nameToFirstMiddleLastMaiden($right_name); 
 
-	if ($left_name =~ / \((.*)\)$/) {
-		$left_name_maiden = $1;
-		$left_name = $`;
-	}
+	# If the female only has a last name or only has a maiden name then try to determine the other
+	if ($gender eq "female") {
+		if (!$left_name_maiden || $left_name_last eq $left_name_maiden) {
+			($left_name_last, $left_name_maiden) = updateLastMaidenNames($left_name_last, $left_name_maiden, $left_profile_id);
+		}
 
-	if ($left_name =~ /^(.*?)\s(.*)\s(.*?)$/) {
-		$left_name_first = $1;
-		$left_name_middle = $2;
-		$left_name_last= $3;
-	} elsif ($left_name =~ /^(.*?)\s(.*?)$/) {
-		$left_name_first = $1;
-		$left_name_last= $2;
-	} elsif ($left_name =~ /^(.*?)$/) {
-		$left_name_first = $1;
-	# This should not happen
-	} else {
-		$left_name_first = $left_name;
-	}
-
-	my $right_name_first	= "";
-	my $right_name_middle	= "";
-	my $right_name_last	= "";
-	my $right_name_maiden	= "";
-
-	if ($right_name =~ / \((.*)\)$/) {
-		$right_name_maiden = $1;
-		$right_name = $`;
-	}
-
-	if ($right_name =~ /^(.*?)\s(.*)\s(.*?)$/) {
-		$right_name_first = $1;
-		$right_name_middle = $2;
-		$right_name_last= $3;
-	} elsif ($right_name =~ /^(.*?)\s(.*?)$/) {
-		$right_name_first = $1;
-		$right_name_last= $2;
-	} elsif ($right_name =~ /^(.*?)$/) {
-		$right_name_first = $1;
-	# This should not happen
-	} else {
-		$right_name_first = $right_name;
+		if (!$right_name_maiden || $right_name_last eq $right_name_maiden) {
+			($left_name_last, $left_name_maiden) = updateLastMaidenNames($right_name_last, $right_name_maiden, $right_profile_id);
+		}
 	}
 
 	my $first_name_matches = compareNamesGuts(1, $left_name_first, $right_name_first);
@@ -949,14 +1010,6 @@ sub profileBasicsMatch($$) {
 		return 0;
 	}
 
-	if (!compareNames($left_profile->gender, $left_name, $right_name, 1)) {
-		printDebug($DBG_MATCH_BASIC,
-			sprintf("NO_MATCH: name '%s' ne '%s'\n",
-				$left_name,
-				$right_name));
-		return 0;
-	}
-
 	if ($left_profile->living ne $right_profile->living) {
 		printDebug($DBG_MATCH_BASIC,
 			sprintf("NO_MATCH: living '%s' does not equal '%s'\n",
@@ -997,6 +1050,16 @@ sub profileBasicsMatch($$) {
 		return 0;
 	}
 
+	# Comparing names can be expensive (it may require multiple API calls) so
+	# do this last after everything else has matched
+	if (!compareNames($left_profile->gender, $left_name, $left_profile->id, $right_name, $right_profile->id, 1)) {
+		printDebug($DBG_MATCH_BASIC,
+			sprintf("NO_MATCH: name '%s' ne '%s'\n",
+				$left_name,
+				$right_name));
+		return 0;
+	}
+
 	printDebug($DBG_MATCH_BASIC,
 		sprintf("MATCH: %s's basic profile data matches\n",
 			$left_name));
@@ -1018,15 +1081,20 @@ sub comparePartners($$$$) {
 	# printDebug($DBG_MATCH_BASIC, sprintf("-left  : %s\n", $left_partners));
 	# printDebug($DBG_MATCH_BASIC, sprintf("-right : %s\n", $right_partners));
 
-	if ($left_partners eq $right_partners) { 
+	if ($left_partners eq $right_partners && !$left_partners) { 
 		printDebug($DBG_MATCH_BASIC, "MATCH: $partner_type '$left_partners' are a match\n");
 		return 1;
 	}
 
-	foreach my $person (split(/:/, $left_partners)) {
-		foreach my $person2 (split(/:/, $right_partners)) {
-			if (compareNames($gender, $person, $person2, 1)) {
-				printDebug($DBG_MATCH_BASIC, "MATCH: $partner_type '$person' is a match.\n");
+	foreach my $person1 (split(/::/, $left_partners)) {
+		(my $person1_id, my $person1_name, my $person1_gender) = split(/:/, $person1);
+
+		foreach my $person2 (split(/::/, $right_partners)) {
+			(my $person2_id, my $person2_name, my $person2_gender) = split(/:/, $person2);
+			next if ($person1_gender ne $person2_gender);
+
+			if (compareNames($person1_gender, $person1_name, $person1_id, $person2_name, $person2_id, 1)) {
+				printDebug($DBG_MATCH_BASIC, "MATCH: $partner_type '$person1_name' is a match.\n");
 				return 1;
 			}
 		}
@@ -1034,34 +1102,26 @@ sub comparePartners($$$$) {
 
 	printDebug($DBG_MATCH_BASIC, "NO_MATCH: $partner_type do not match\n");
 	printDebug($DBG_MATCH_BASIC, "Left Profile $partner_type:\n");
-	foreach my $person (split(/:/, $left_partners)) {
-		printDebug($DBG_MATCH_BASIC, "- $person\n");
+	foreach my $person (split(/::/, $left_partners)) {
+		(my $person_id, my $person_name, my $person_gender) = split(/:/, $person);
+		printDebug($DBG_MATCH_BASIC, "- <a href=\"http://www.geni.com/people/id/$person_id\">$person_name</a>\n");
 	}
 
 	printDebug($DBG_MATCH_BASIC, "Right Profile $partner_type:\n");
-	foreach my $person (split(/:/, $right_partners)) {
-		printDebug($DBG_MATCH_BASIC, "- $person\n");
+	foreach my $person (split(/::/, $right_partners)) {
+		(my $person_id, my $person_name, my $person_gender) = split(/:/, $person);
+		printDebug($DBG_MATCH_BASIC, "- <a href=\"http://www.geni.com/people/id/$person_id\">$person_name</a>\n");
 	}
 
 	return 0;
 }
 
-sub avoidDuplicatesPush($$$) {
-	my $gender	= shift;
+sub avoidDuplicatesPush($$) {
 	my $value_array = shift;
 	my $value_to_add= shift;
 
-	# We're storing profiles in the array
-	if ($value_to_add =~ /^\d+/) {
-		foreach my $profile_id (@$value_array) {
-			return if ($profile_id eq $value_to_add);
-		}
-
-	# We're storing names in the array
-	} else {
-		foreach my $name (@$value_array) {
-			return if compareNames($gender, $name, $value_to_add, 0);
-		}
+	foreach my $value (@$value_array) {
+		return if ($value eq $value_to_add);
 	}
 
 	push @$value_array, $value_to_add;
@@ -1224,17 +1284,11 @@ sub compareProfiles($$) {
 		$geni_profile->birth_year($json_profile->{'focus'}->{'birth_year'});
 		$geni_profile->id($json_profile->{'focus'}->{'id'});
 		
-		my @fathers;
-		my @mothers;
-		my @spouses;
-		my @sons;
-		my @daughters;
-		my @brothers;
-		my @sisters;
-		jsonToFamilyArrays($json_profile, $profile_id, 1, \@fathers, \@mothers, \@spouses, \@sons, \@daughters, \@brothers, \@sisters);
-		$geni_profile->fathers(join(":", @fathers));
-		$geni_profile->mothers(join(":", @mothers));
-		$geni_profile->spouses(join(":", @spouses));
+		my @fathers, my @mothers, my @spouses, my @sons, my @daughters, my @brothers, my @sisters;
+		jsonToFamilyArrays($json_profile, $profile_id, \@fathers, \@mothers, \@spouses, \@sons, \@daughters, \@brothers, \@sisters);
+		$geni_profile->fathers(join("::", @fathers));
+		$geni_profile->mothers(join("::", @mothers));
+		$geni_profile->spouses(join("::", @spouses));
 		$geni_profile = $right_profile;
 	}
 
@@ -1328,7 +1382,7 @@ sub compareAllProfiles($$) {
 		for (my $j = $i + 1; $j <= $#profiles_array; $j++) {
 			#printDebug($DBG_NONE, "INSIDE LOOP: $j => $profiles_array[$j]\n");
 			(my $j_id, my $j_name, my $gender) = split(/:/, $profiles_array[$j]);
-			if (compareNames($gender, $i_name, $j_name, 0)) {
+			if (compareNames($gender, $i_name, $i_id, $j_name, $j_id, 0)) {
 				if (compareProfiles($i_id, $j_id)) {
 					printDebug($DBG_PROGRESS, "TREE_CONFLICT_COMPARE: $text\[$i] $i_name vs. $text\[$j] $j_name - MATCH\n");
 					mergeProfiles("https://www.geni.com/api/profiles/merge/$i_id,$j_id", $i_id, $j_id, "TREE_CONFLICT");
@@ -1386,19 +1440,13 @@ sub analyzeTreeConflict($$) {
 
 	printDebug($DBG_PROGRESS, "\nTree Conflict analyze for '$profile_id', type '$issue_type'\n");
 
-	my @fathers;
-	my @mothers;
-	my @spouses;
-	my @sons;
-	my @daughters;
-	my @brothers;
-	my @sisters;
+	my @fathers, my @mothers, my @spouses, my @sons, my @daughters, my @brothers, my @sisters;
 	my $filename = "$env{'datadir'}/$profile_id\.json";
 	my $url = "https://www.geni.com/api/profiles/immediate_family/$profile_id?only_ids=true";
 	my $json_profile = getJSON($filename, $url, $profile_id, 0);
 	return 0 if (!$json_profile);
 
-	jsonToFamilyArrays($json_profile, $profile_id, 0, \@fathers, \@mothers, \@spouses, \@sons, \@daughters, \@brothers, \@sisters);
+	jsonToFamilyArrays($json_profile, $profile_id, \@fathers, \@mothers, \@spouses, \@sons, \@daughters, \@brothers, \@sisters);
 
 	my $profile_count = 0;
 	my $match_count = 0;
@@ -1444,10 +1492,10 @@ sub analyzeNewTreeConflicts() {
 		delete $new_tree_conflicts{$id};
 	}
 }
-sub jsonToFamilyArrays($$$$$$$$$$) {
+
+sub jsonToFamilyArrays($$$$$$$$$) {
 	my $json_profile	= shift;
 	my $profile_id		= shift;
-	my $push_name_only	= shift;
 	my $fathers_ptr		= shift;
 	my $mothers_ptr		= shift;
 	my $spouses_ptr		= shift;
@@ -1490,7 +1538,7 @@ sub jsonToFamilyArrays($$$$$$$$$$) {
 			my $name_last = $json_profile->{'nodes'}->{$j}->{'last_name'};
 			my $name_maiden = $json_profile->{'nodes'}->{$j}->{'maiden_name'};
 			my $name = cleanupName($name_first, $name_middle, $name_last, $name_maiden);
-			my $push_string = $push_name_only ? $name : "$id:$name:$gender";
+			my $push_string = "$id:$name:$gender";
 
 			# A "hidden_child" is just a placeholder profile and can be ignored
 			next if ($rel eq "hidden_child");
@@ -1507,27 +1555,27 @@ sub jsonToFamilyArrays($$$$$$$$$$) {
 			if ($rel eq "partner") {
 				if ($partner_type eq "parents") {
 					if ($gender eq "male") {
-						avoidDuplicatesPush("", $fathers_ptr, $push_string);
+						avoidDuplicatesPush($fathers_ptr, $push_string);
 					} elsif ($gender eq "female") {
-						avoidDuplicatesPush("", $mothers_ptr, $push_string);
+						avoidDuplicatesPush($mothers_ptr, $push_string);
 					}
 				} elsif ($partner_type eq "spouses") {
-					avoidDuplicatesPush("", $spouses_ptr, $push_string);
+					avoidDuplicatesPush($spouses_ptr, $push_string);
 				}
 
 			} elsif ($rel eq "child") {
 
 				if ($partner_type eq "parents") {
 					if ($gender eq "male") {
-						avoidDuplicatesPush("", $brothers_ptr, $push_string);
+						avoidDuplicatesPush($brothers_ptr, $push_string);
 					} elsif ($gender eq "female") {
-						avoidDuplicatesPush("", $sisters_ptr, $push_string);
+						avoidDuplicatesPush($sisters_ptr, $push_string);
 					}
 				} elsif ($partner_type eq "spouses") {
 					if ($gender eq "male") {
-						avoidDuplicatesPush("", $sons_ptr, $push_string);
+						avoidDuplicatesPush($sons_ptr, $push_string);
 					} elsif ($gender eq "female") {
-						avoidDuplicatesPush("", $daughters_ptr, $push_string);
+						avoidDuplicatesPush($daughters_ptr, $push_string);
 					}
 				}
 
@@ -1547,22 +1595,14 @@ sub analyzeTreeConflictRecursive($) {
 	analyzeTreeConflict($profile_id, "partner");
 	analyzeTreeConflict($profile_id, "children");
 
-
-	my @fathers;
-	my @mothers;
-	my @spouses;
-	my @sons;
-	my @daughters;
-	my @brothers;
-	my @sisters;
-
+	my @fathers, my @mothers, my @spouses, my @sons, my @daughters, my @brothers, my @sisters;
 	my $filename = "$env{'datadir'}/$profile_id\.json";
 	my $url = "https://www.geni.com/api/profiles/immediate_family/$profile_id?only_ids=true";
 	my $json_profile = getJSON($filename, $url, $profile_id, 0);
 	return 0 if (!$json_profile);
 
 	# Then build arrays of all the immediate family members of the starting profile
-	jsonToFamilyArrays($json_profile, $profile_id, 0, \@fathers, \@mothers, \@spouses, \@sons, \@daughters, \@brothers, \@sisters);
+	jsonToFamilyArrays($json_profile, $profile_id, \@fathers, \@mothers, \@spouses, \@sons, \@daughters, \@brothers, \@sisters);
 
 	# Then resolve the tree conflicts for the immediate family members
 	my @parents_and_spouses;
