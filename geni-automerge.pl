@@ -74,10 +74,10 @@ sub init(){
 	$debug{"console_" . $DBG_TIME}		= 0;
 
 	struct (profile => {
-		name_first		=> '$',
-		name_middle		=> '$',
-		name_last		=> '$',
-		name_maiden		=> '$',
+		first_name		=> '$',
+		middle_name		=> '$',
+		last_name		=> '$',
+		maiden_name		=> '$',
 		suffix			=> '$',
 		gender			=> '$',
 		living			=> '$',
@@ -692,31 +692,31 @@ sub cleanupNameGuts($) {
 
 sub nameToFirstMiddleLastMaiden($) {
 	my $name = shift;
-	my $name_first	= "";
-	my $name_middle	= "";
-	my $name_last	= "";
-	my $name_maiden	= "";
+	my $first_name	= "";
+	my $middle_name	= "";
+	my $last_name	= "";
+	my $maiden_name	= "";
 
 	if ($name =~ / \((.*)\)$/) {
-		$name_maiden = $1;
+		$maiden_name = $1;
 		$name = $`;
 	}
 
 	if ($name =~ /^(.*?)\s(.*)\s(.*?)$/) {
-		$name_first = $1;
-		$name_middle = $2;
-		$name_last= $3;
+		$first_name = $1;
+		$middle_name = $2;
+		$last_name = $3;
 	} elsif ($name =~ /^(.*?)\s(.*?)$/) {
-		$name_first = $1;
-		$name_last= $2;
+		$first_name = $1;
+		$last_name = $2;
 	} elsif ($name =~ /^(.*?)$/) {
-		$name_first = $1;
+		$first_name = $1;
 	# This should not happen
 	} else {
-		$name_first = $name;
+		$first_name = $name;
 	}
 
-	return ($name_first, $name_middle, $name_last, $name_maiden);
+	return ($first_name, $middle_name, $last_name, $maiden_name);
 }
 
 sub getMaleLastNames($) {
@@ -875,27 +875,27 @@ sub compareNamesGuts($$$) {
 }
 
 sub updateLastMaidenNames($$$) {
-	my $name_last	= shift;
-	my $name_maiden	= shift;
+	my $last_name	= shift;
+	my $maiden_name	= shift;
 	my $profile_id	= shift;
 
 	(my $father_last_name, my $husband_last_name) = getMaleLastNames($profile_id);
 
-	if ($husband_last_name && $husband_last_name ne $name_last) {
-		if ($name_maiden eq "") {
-			printDebug($DBG_NAMES, "Changing maiden name from '' to '$name_last'\n");
-			$name_maiden = $name_last;
+	if ($husband_last_name && $husband_last_name ne $last_name) {
+		if ($maiden_name eq "") {
+			printDebug($DBG_NAMES, "Changing maiden name from '' to '$last_name'\n");
+			$maiden_name = $last_name;
 		}
-		printDebug($DBG_NAMES, "Changing last name from '$name_last' to '$husband_last_name'\n");
-		$name_last = $husband_last_name;
+		printDebug($DBG_NAMES, "Changing last name from '$last_name' to '$husband_last_name'\n");
+		$last_name = $husband_last_name;
 	}
 
-	if ($father_last_name && (!$name_maiden || $name_maiden eq $husband_last_name)) {
-		printDebug($DBG_NAMES, "Changing maiden name from '$name_maiden' to '$father_last_name'\n");
-		$name_maiden = $father_last_name;
+	if ($father_last_name && (!$maiden_name || $maiden_name eq $husband_last_name)) {
+		printDebug($DBG_NAMES, "Changing maiden name from '$maiden_name' to '$father_last_name'\n");
+		$maiden_name = $father_last_name;
 	}
 
-	return ($name_last, $name_maiden);
+	return ($last_name, $maiden_name);
 }
 
 # Return TRUE if they match
@@ -918,63 +918,63 @@ sub compareNames($$$$$$) {
 	# It one name is blank then be conservative and return false
 	return 0 if (!$left_name || !$right_name);
 
-	(my $left_name_first, my $left_name_middle, my $left_name_last, my $left_name_maiden) = nameToFirstMiddleLastMaiden($left_name); 
-	(my $right_name_first, my $right_name_middle, my $right_name_last, my $right_name_maiden) = nameToFirstMiddleLastMaiden($right_name); 
+	(my $left_first_name, my $left_middle_name, my $left_last_name, my $left_maiden_name) = nameToFirstMiddleLastMaiden($left_name); 
+	(my $right_first_name, my $right_middle_name, my $right_last_name, my $right_maiden_name) = nameToFirstMiddleLastMaiden($right_name); 
 
 	# If the female only has a last name or only has a maiden name then try to determine the other
 	if ($gender eq "female") {
-		if (!$left_name_maiden || $left_name_last eq $left_name_maiden) {
-			($left_name_last, $left_name_maiden) = updateLastMaidenNames($left_name_last, $left_name_maiden, $left_profile_id);
+		if (!$left_maiden_name || $left_last_name eq $left_maiden_name) {
+			($left_last_name, $left_maiden_name) = updateLastMaidenNames($left_last_name, $left_maiden_name, $left_profile_id);
 		}
 
-		if (!$right_name_maiden || $right_name_last eq $right_name_maiden) {
-			($left_name_last, $left_name_maiden) = updateLastMaidenNames($right_name_last, $right_name_maiden, $right_profile_id);
+		if (!$right_maiden_name || $right_last_name eq $right_maiden_name) {
+			($left_last_name, $left_maiden_name) = updateLastMaidenNames($right_last_name, $right_maiden_name, $right_profile_id);
 		}
 	}
 
-	my $first_name_matches = compareNamesGuts(1, $left_name_first, $right_name_first);
-	my $middle_name_matches = compareNamesGuts(1, $left_name_middle, $right_name_middle);
+	my $first_name_matches = compareNamesGuts(1, $left_first_name, $right_first_name);
+	my $middle_name_matches = compareNamesGuts(1, $left_middle_name, $right_middle_name);
 	my $last_name_matches = 0;
 
 	if ($gender eq "female") {
-		$left_name_maiden = $left_name_last if ($left_name_maiden eq "");
-		$right_name_maiden = $right_name_last if ($right_name_maiden eq "");
-		$last_name_matches = compareNamesGuts(0, $left_name_maiden, $right_name_maiden) ||
-				     compareNamesGuts(0, $left_name_last, $right_name_last);
+		$left_maiden_name = $left_last_name if ($left_maiden_name eq "");
+		$right_maiden_name = $right_last_name if ($right_maiden_name eq "");
+		$last_name_matches = compareNamesGuts(0, $left_maiden_name, $right_maiden_name) ||
+				     compareNamesGuts(0, $left_last_name, $right_last_name);
 	} else {
-		$last_name_matches = compareNamesGuts(0, $left_name_last, $right_name_last);
+		$last_name_matches = compareNamesGuts(0, $left_last_name, $right_last_name);
 	}
 
 	printDebug($DBG_NONE,
 		sprintf("%sMATCH First Name: left '%s' vs. right '%s'\n",
 			($first_name_matches) ? "" : "NO_",
-			$left_name_first,
-			$right_name_first)) if $debug;
+			$left_first_name,
+			$right_first_name)) if $debug;
 	printDebug($DBG_NONE,
 		sprintf("%sMATCH Middle Name: left '%s' vs. right '%s'\n",
 			($middle_name_matches) ? "" : "NO_",
-			$left_name_middle,
-			$right_name_middle)) if $debug;
+			$left_middle_name,
+			$right_middle_name)) if $debug;
 
 	if ($gender eq "female") {
 		printDebug($DBG_NONE,
 			sprintf("%sMATCH Last Name: left '%s (%s)' vs. right '%s (%s)'\n",
 				($last_name_matches) ? "" : "NO_",
-				$left_name_last,
-				$left_name_maiden,
-				$right_name_last,
-				$right_name_maiden)) if $debug;
+				$left_last_name,
+				$left_maiden_name,
+				$right_last_name,
+				$right_maiden_name)) if $debug;
 	} else {
 		printDebug($DBG_NONE,
 			sprintf("%sMATCH Last Name: left '%s' vs. right '%s'\n",
 				($last_name_matches) ? "" : "NO_",
-				$left_name_last,
-				$right_name_last)) if $debug;
+				$left_last_name,
+				$right_last_name)) if $debug;
 	}
 
 	# This should never happen but just to be safe return false if everything is blank
-	if (!$left_name_first && !$left_name_middle && !$left_name_last && !$left_name_maiden &&
-	    !$right_name_first && !$right_name_middle && !$right_name_last && !$right_name_maiden) {
+	if (!$left_first_name && !$left_middle_name && !$left_last_name && !$left_maiden_name &&
+	    !$right_first_name && !$right_middle_name && !$right_last_name && !$right_maiden_name) {
 		printDebug($DBG_PROGRESS, "ERROR: compareNames all names were blank\n");
 		return 0;
 	}
@@ -991,16 +991,16 @@ sub profileBasicsMatch($$) {
 	my $score = 0;
 
 	my $left_name = 
-		cleanupName($left_profile->name_first,
-			$left_profile->name_middle,
-			$left_profile->name_last,
-			$left_profile->name_maiden);
+		cleanupName($left_profile->first_name,
+			$left_profile->middle_name,
+			$left_profile->last_name,
+			$left_profile->maiden_name);
 
 	my $right_name =
-		cleanupName($right_profile->name_first,
-			$right_profile->name_middle,
-			$right_profile->name_last,
-			$right_profile->name_maiden);
+		cleanupName($right_profile->first_name,
+			$right_profile->middle_name,
+			$right_profile->last_name,
+			$right_profile->maiden_name);
 
 	if ($left_profile->gender ne $right_profile->gender) {
 		printDebug($DBG_MATCH_BASIC,
@@ -1271,10 +1271,10 @@ sub compareProfiles($$) {
 		}
 
 		my $profile_id = $json_profile->{'focus'}->{'id'};
-		$geni_profile->name_first($json_profile->{'focus'}->{'first_name'});
-		$geni_profile->name_middle($json_profile->{'focus'}->{'middle_name'});
-		$geni_profile->name_last($json_profile->{'focus'}->{'last_name'});
-		$geni_profile->name_maiden($json_profile->{'focus'}->{'maiden_name'});
+		$geni_profile->first_name($json_profile->{'focus'}->{'first_name'});
+		$geni_profile->middle_name($json_profile->{'focus'}->{'middle_name'});
+		$geni_profile->last_name($json_profile->{'focus'}->{'last_name'});
+		$geni_profile->maiden_name($json_profile->{'focus'}->{'maiden_name'});
 		$geni_profile->suffix($json_profile->{'focus'}->{'suffix'});
 		$geni_profile->gender($json_profile->{'focus'}->{'gender'});
 		$geni_profile->living($json_profile->{'focus'}->{'living'});
@@ -1533,11 +1533,11 @@ sub jsonToFamilyArrays($$$$$$$$$) {
 			my $rel = $json_profile->{'nodes'}->{$i}->{'edges'}->{$j}->{'rel'};
 			my $gender = $json_profile->{'nodes'}->{$j}->{'gender'};
 			my $id = $json_profile->{'nodes'}->{$j}->{'id'};
-			my $name_first = $json_profile->{'nodes'}->{$j}->{'first_name'};
-			my $name_middle = $json_profile->{'nodes'}->{$j}->{'middle_name'};
-			my $name_last = $json_profile->{'nodes'}->{$j}->{'last_name'};
-			my $name_maiden = $json_profile->{'nodes'}->{$j}->{'maiden_name'};
-			my $name = cleanupName($name_first, $name_middle, $name_last, $name_maiden);
+			my $first_name = $json_profile->{'nodes'}->{$j}->{'first_name'};
+			my $middle_name = $json_profile->{'nodes'}->{$j}->{'middle_name'};
+			my $last_name = $json_profile->{'nodes'}->{$j}->{'last_name'};
+			my $maiden_name = $json_profile->{'nodes'}->{$j}->{'maiden_name'};
+			my $name = cleanupName($first_name, $middle_name, $last_name, $maiden_name);
 			my $push_string = "$id:$name:$gender";
 
 			# A "hidden_child" is just a placeholder profile and can be ignored
