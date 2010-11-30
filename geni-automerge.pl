@@ -1503,9 +1503,11 @@ sub mergeProfiles($$$$) {
 
 		# This happens if you try to merge two private profiles
 		if ($result->decoded_content =~ /merge requested/i) {
+			my $id1_public = checkPublic($id1);
+			my $id2_public = checkPublic($id2);
 
 			# Try to make both profiles public, if it works then do the merge again
-			if (checkPublic($id1) && checkPublic($id2)) {
+			if ($id1_public && $id2_public) {
 				sleepIfNeeded();
 				my $result = new HTTP::Response;
 				$result = $m->post($merge_url_api);
