@@ -1975,7 +1975,9 @@ sub main() {
 		if (-e $env{'default_login'}) {
 			open (INF, $env{'default_login'}) or die("ERROR: can't open $env{'default_login'}");
 			$env{'username'} = <INF>;
+			chomp($env{'username'});
 			$env{'password'} = <INF>;
+			chomp($env{'password'});
 			close INF;
 		} else {
 			print "username: ";
