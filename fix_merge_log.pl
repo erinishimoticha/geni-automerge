@@ -2,6 +2,7 @@
 
 # 2010-11-15 00:00:00 :: ofir591@bezeqint.net :: TREE_CONFLICT :: Merged <a href="http://www.geni.com/people/id/6000000003649723174">6000000003649723174</a> with <a href="http://www.geni.com/people/id/6000000007158974849">6000000007158974849</a>
 
+my $prev_line = "";
 sub fix_merge_log() {
 	my $filename = "merge_log.html";
 	if (!(-e $filename)) {
@@ -15,11 +16,17 @@ sub fix_merge_log() {
 	open(FH, $filename);
 	while(<FH>) {
 		chomp();
+		if (/^ ::/) {
+			$_ = $prev_line . $_;
+		}
+
 		if (/(Merged.*)/) {
 			# print "$1\n";
 			$merge_count{$1}++;
 			$merge_content{$1} = $_;
 		}
+
+		$prev_line = $_;
 	}
 	
 	open(DUPS, "> $filename\_dups.html") || die("ERROR: Could not open '$filename\_dups.html'");
