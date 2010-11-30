@@ -1503,7 +1503,26 @@ sub mergeProfiles($$$$) {
 
 		# This happens if you try to merge two private profiles
 		if ($result->decoded_content =~ /merge requested/i) {
-			recordMergeRequest($id1, $id2);
+
+			# Try to make both profiles public, if it works then do the merge again
+			if (checkPublic($id1) && checkPublic($id2)) {
+				sleepIfNeeded();
+				my $result = new HTTP::Response;
+				$result = $m->post($merge_url_api);
+				updateGetHistory("mergeProfiles");
+				if ($result->is_success) {
+					if ($result->decoded_content =~ /merge requested/i) {
+						recordMergeRequest($id1, $id2);
+					} else {
+						recordMergeComplete($id1, $id2, $desc);
+					}
+				} else {
+					recordMergeFailure($id1, $id2, $result->decoded_content);
+				}
+
+			} else {
+				recordMergeRequest($id1, $id2);
+			}
 
 		# The merge was ok
 		} else {
