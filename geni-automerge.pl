@@ -757,6 +757,7 @@ sub getMaleLastNames($) {
 		$husband_last_name = $last;
 	}
 	
+	unlink $filename if $env{'delete_files'};
 	return ($father_last_name, $husband_last_name);
 }
 
@@ -1650,7 +1651,7 @@ sub analyzeTreeConflict($$) {
 	$env{'circa_range'} = 5;
 	printDebug($DBG_PROGRESS, "Matched $match_count/$profile_count\n");
 
-	unlink $filename if $env{'delete_files'};
+	unlink $filename if ($env{'delete_files'} && $match_count);
 }
 
 # Resolve any new tree conflicts that were created. This could in turn
@@ -1663,6 +1664,7 @@ sub analyzeNewTreeConflicts() {
 		analyzeTreeConflict($id, "partner");
 		analyzeTreeConflict($id, "children");
 		delete $new_tree_conflicts{$id};
+		unlink "$env{'datadir'}/$id\.json" if ($env{'delete_files'});
 	}
 }
 
@@ -1767,6 +1769,7 @@ sub analyzeTreeConflictRecursive($) {
 	analyzeTreeConflict($profile_id, "siblings");
 	analyzeTreeConflict($profile_id, "partner");
 	analyzeTreeConflict($profile_id, "children");
+	unlink "$env{'datadir'}/$profile_id\.json" if ($env{'delete_files'});
 
 	my @fathers, my @mothers, my @spouses, my @sons, my @daughters, my @brothers, my @sisters;
 	my $filename = "$env{'datadir'}/$profile_id\.json";
@@ -1788,6 +1791,7 @@ sub analyzeTreeConflictRecursive($) {
 		analyzeTreeConflict($id, "parent");
 		analyzeTreeConflict($id, "siblings");
 		analyzeTreeConflict($id, "partner");
+		unlink "$env{'datadir'}/$id\.json" if ($env{'delete_files'});
 	}
 
 	my @siblings;
@@ -1798,6 +1802,7 @@ sub analyzeTreeConflictRecursive($) {
 		printDebug($DBG_PROGRESS, "SIBLING: $id\n");
 		analyzeTreeConflict($id, "partner");
 		analyzeTreeConflict($id, "children");
+		unlink "$env{'datadir'}/$id\.json" if ($env{'delete_files'});
 	}
 
 	my @children;
@@ -1808,6 +1813,7 @@ sub analyzeTreeConflictRecursive($) {
 		printDebug($DBG_PROGRESS, "CHILD: $id\n");
 		analyzeTreeConflict($id, "partner");
 		analyzeTreeConflict($id, "children");
+		unlink "$env{'datadir'}/$id\.json" if ($env{'delete_files'});
 	}
 
 	printDebug($DBG_PROGRESS, "$env{'matches'} matches via immediate family members\n");
@@ -1989,16 +1995,18 @@ sub traverseJSONPages($$$$) {
 				analyzePendingMerge($json_list_entry->{'profiles'}->[0], $json_list_entry->{'profiles'}->[1]);
 			} elsif ($type eq "TREE_CONFLICTS") {
 				my $conflict_type = $json_list_entry->{'issue_type'};
+				my $profile_id = $json_list_entry->{'profile'};
 				if ($conflict_type eq "parent") {
-			 		analyzeTreeConflict($json_list_entry->{'profile'}, "parent");
-			 		analyzeTreeConflict($json_list_entry->{'profile'}, "siblings");
+			 		analyzeTreeConflict($profile_id, "parent");
+			 		analyzeTreeConflict($profile_id, "siblings");
 				} elsif ($conflict_type eq "partner") {
-			 		analyzeTreeConflict($json_list_entry->{'profile'}, "partner");
-			 		analyzeTreeConflict($json_list_entry->{'profile'}, "children");
+			 		analyzeTreeConflict($profile_id, "partner");
+			 		analyzeTreeConflict($profile_id, "children");
 				} else {
 					printDebug($DBG_PROGRESS, "ERROR: Unknown tree conflict type '$conflict_type'\n");
 					next;
 				}
+				unlink "$env{'datadir'}/$profile_id\.json" if ($env{'delete_files'});
 
 				analyzeNewTreeConflicts();
 			} elsif ($type eq "TREE_MATCHES") {
@@ -2247,6 +2255,7 @@ sub main() {
 		analyzeTreeConflict($left_id, "siblings");
 		analyzeTreeConflict($left_id, "partner");
 		analyzeTreeConflict($left_id, "children");
+		unlink "$env{'datadir'}/$left_id\.json" if ($env{'delete_files'});
 
 	} elsif ($env{'action'} eq "tree_matches") {
 		printDebug($DBG_PROGRESS, "NOTE: The -all option is not supported for Tree Matches\n") if $env{'all_of_geni'};
@@ -2282,6 +2291,7 @@ sub main() {
 		analyzeTreeConflict($left_id, "siblings");
 		analyzeTreeConflict($left_id, "partner");
 		analyzeTreeConflict($left_id, "children");
+		unlink "$env{'datadir'}/$left_id\.json" if ($env{'delete_files'});
 		analyzeTreeConflictRecursive($left_id);
 
 	} elsif ($env{'action'} eq "check_public") {
