@@ -17,7 +17,8 @@ binmode STDOUT, ":utf8";
 binmode STDERR, ":utf8";
 
 # globals and constants
-my (%env, %debug, %blacklist_managers, @get_history, %private_profiles, %new_tree_conflicts);
+my (%env, %debug, %blacklist_managers, @get_history, %new_tree_conflicts);
+my (%cache_private_profiles, %cache_merge_request, %cache_merge_fail, %cache_no_match, %cache_name_mismatch);
 my $m = WWW::Mechanize->new(autocheck => 0);
 my $DBG_NONE			= "DBG_NONE"; # Normal output
 my $DBG_PROGRESS		= "DBG_PROGRESS";
@@ -756,6 +757,7 @@ sub getMaleLastNames($) {
 		$husband_last_name = $last;
 	}
 	
+	unlink $filename if $env{'delete_files'};
 	return ($father_last_name, $husband_last_name);
 }
 
@@ -839,6 +841,148 @@ sub doubleMetaphoneCompare($$) {
 		($left_code2 eq $right_code2 && $left_code2));
 }
 
+sub recordMergeComplete($$$) {
+	my $id1			= shift;
+	my $id2			= shift;
+	my $desc		= shift;
+	my $id1_url = "<a href=\"http://www.geni.com/people/id/$id1\">$id1</a>";
+	my $id2_url = "<a href=\"http://www.geni.com/people/id/$id2\">$id2</a>";
+	(my $sec, my $min, my $hour, my $mday, my $mon, my $year, my $wday, my $yday, my $isdst) = localtime(time);
+
+	write_file($env{'merge_log_file'},
+			sprintf("%4d-%02d-%02d %02d:%02d:%02d :: %s :: %s :: Merged %s with %s\n",
+ 				$year+1900, $mon+1, $mday, $hour, $min, $sec,
+				$env{'username'}, $desc, $id1_url, $id2_url), 1);
+	$env{'matches'}++;
+	$new_tree_conflicts{$id1} = 1;
+}
+
+sub recordMergeRequest($$) {
+	my $id1			= shift;
+	my $id2			= shift;
+	write_file($env{'cache_merge_request'}, "$id1:$id2\n", 1);
+	$cache_merge_request{"$id1:$id2"} = 1;
+}
+
+sub recordMergeFailure($$$) {
+	my $id1		= shift;
+	my $id2		= shift;
+	my $reason	= shift;
+
+	(my $sec, my $min, my $hour, my $mday, my $mon, my $year, my $wday, my $yday, my $isdst) = localtime(time);
+	my $fail_string = sprintf("MERGE FAILED for %s at %4d-%02d-%02d %02d:%02d:%02d by %s. Failure reason '%s'<br />\n",
+				mergeURLHTML($id1, $id2),
+				$year+1900, $mon+1, $mday, $hour, $min, $sec,
+				$env{'username'}, $reason);
+	printDebug($DBG_PROGRESS, ": MERGE FAILED for $id1 and $id2\n");
+	write_file($env{'merge_fail_file'}, $fail_string, 1);
+	write_file($env{'cache_merge_fail'}, "$id1:$id2\n", 1);
+	$cache_merge_fail{"$id1:$id2"} = 1;
+}
+
+sub recordNonMatch($$) {
+	my $id1	= shift;
+	my $id2	= shift;
+	write_file($env{'cache_no_match'}, "$id1:$id2\n", 1);
+	$cache_no_match{"$id1:$id2"} = 1;
+}
+
+sub recordNameCompare($$$) {
+	my $id1		= shift;
+	my $id2		= shift;
+	my $result	= shift;
+	$result = ($result ? "MATCH" : "NOT_A_MATCH");
+	write_file($env{'cache_name_mismatch'}, "$id1:$id2:$result\n", 1);
+	$cache_name_mismatch{"$id1:$id2"} = $result;
+}
+
+sub nameCompareResultCached($$) {
+	my $id1	= shift;
+	my $id2	= shift;
+
+	if (exists $cache_name_mismatch{"$id1:$id2"}) {
+		if ($cache_name_mismatch{"$id1:$id2"} eq "NOT_A_MATCH") {
+			printDebug($DBG_PROGRESS, ": (CACHED) NAME MISMATCH\n");
+		} else {
+			printDebug($DBG_PROGRESS, ": (CACHED) NAME MATCH\n");
+		}
+		return $cache_name_mismatch{"$id1:$id2"};
+	}
+
+	if (exists $cache_name_mismatch{"$id2:$id1"}) {
+		if ($cache_name_mismatch{"$id2:$id1"} eq "NOT_A_MATCH") {
+			printDebug($DBG_PROGRESS, ": (CACHED) NAME MISMATCH\n");
+		} else {
+			printDebug($DBG_PROGRESS, ": (CACHED) NAME MATCH\n");
+		}
+		return $cache_name_mismatch{"$id2:$id1"};
+	}
+
+	return "";
+}
+
+sub compareResultCached($$) {
+	my $id1	= shift;
+	my $id2	= shift;
+
+	if (exists $cache_no_match{"$id1:$id2"} || exists $cache_no_match{"$id2:$id1"}) {
+		printDebug($DBG_PROGRESS, ": (CACHED) NOT A MATCH\n");
+		return 1;
+	}
+
+	if (exists $cache_merge_request{"$id1:$id2"} || exists $cache_merge_request{"$id2:$id1"}) {
+		printDebug($DBG_PROGRESS, ": (CACHED) MERGE REQUESTED\n");
+		return 1;
+	}
+
+	if (exists $cache_merge_fail{"$id1:$id2"} || exists $cache_merge_fail{"$id2:$id1"}) {
+		printDebug($DBG_PROGRESS, ": (CACHED) MERGE FAILED\n");
+		return 1;
+	}
+
+	return 0;
+}
+
+sub loadCache() {
+	open(FH, $env{'cache_private_profiles'});
+	while (<FH>) {
+		chomp();
+		$cache_private_profiles{$_} = 1;
+	}
+	close FH;
+
+	open(FH, $env{'cache_merge_request'});
+	while (<FH>) {
+		chomp();
+		$cache_merge_request{$_} = 1;
+	}
+	close FH;
+
+	open(FH, $env{'cache_merge_fail'});
+	while (<FH>) {
+		chomp();
+		$cache_merge_fail{$_} = 1;
+	}
+	close FH;
+
+	open(FH, $env{'cache_no_match'});
+	while (<FH>) {
+		chomp();
+		$cache_no_match{$_} = 1;
+	}
+	close FH;
+
+	open(FH, $env{'cache_name_mismatch'});
+	while (<FH>) {
+		chomp();
+		if (/(\d+):(\d+):(.*)$/) {
+			$cache_name_mismatch{"$1\:$2"} = $3;
+		}
+	}
+	close FH;
+}
+
+
 sub compareNamesGuts($$$) {
 	my $compare_initials = shift;
 	my $left_name	= shift;
@@ -906,6 +1050,7 @@ sub compareNames($$$$$$) {
 	my $right_name		= shift;
 	my $right_profile_id	= shift;
 	my $debug		= shift;
+	my $cache_result	= 0;
 
 	if ($left_name eq $right_name) {
 		printDebug($DBG_NONE,
@@ -921,21 +1066,36 @@ sub compareNames($$$$$$) {
 	(my $left_first_name, my $left_middle_name, my $left_last_name, my $left_maiden_name) = nameToFirstMiddleLastMaiden($left_name); 
 	(my $right_first_name, my $right_middle_name, my $right_last_name, my $right_maiden_name) = nameToFirstMiddleLastMaiden($right_name); 
 
+	my $first_name_matches = compareNamesGuts(1, $left_first_name, $right_first_name);
+	printDebug($DBG_NONE,
+		sprintf("%sMATCH First Name: left '%s' vs. right '%s'\n",
+			($first_name_matches) ? "" : "NO_",
+			$left_first_name,
+			$right_first_name)) if $debug;
+	return 0 if (!$first_name_matches);
+
+	my $middle_name_matches = compareNamesGuts(1, $left_middle_name, $right_middle_name);
+	printDebug($DBG_NONE,
+		sprintf("%sMATCH Middle Name: left '%s' vs. right '%s'\n",
+			($middle_name_matches) ? "" : "NO_",
+			$left_middle_name,
+			$right_middle_name)) if $debug;
+	return 0 if (!$middle_name_matches);
+
 	# If the female only has a last name or only has a maiden name then try to determine the other
 	if ($gender eq "female") {
 		if (!$left_maiden_name || $left_last_name eq $left_maiden_name) {
 			($left_last_name, $left_maiden_name) = updateLastMaidenNames($left_last_name, $left_maiden_name, $left_profile_id);
+			$cache_result = 1;
 		}
 
 		if (!$right_maiden_name || $right_last_name eq $right_maiden_name) {
 			($left_last_name, $left_maiden_name) = updateLastMaidenNames($right_last_name, $right_maiden_name, $right_profile_id);
+			$cache_result = 1;
 		}
 	}
 
-	my $first_name_matches = compareNamesGuts(1, $left_first_name, $right_first_name);
-	my $middle_name_matches = compareNamesGuts(1, $left_middle_name, $right_middle_name);
 	my $last_name_matches = 0;
-
 	if ($gender eq "female") {
 		$left_maiden_name = $left_last_name if ($left_maiden_name eq "");
 		$right_maiden_name = $right_last_name if ($right_maiden_name eq "");
@@ -944,17 +1104,6 @@ sub compareNames($$$$$$) {
 	} else {
 		$last_name_matches = compareNamesGuts(0, $left_last_name, $right_last_name);
 	}
-
-	printDebug($DBG_NONE,
-		sprintf("%sMATCH First Name: left '%s' vs. right '%s'\n",
-			($first_name_matches) ? "" : "NO_",
-			$left_first_name,
-			$right_first_name)) if $debug;
-	printDebug($DBG_NONE,
-		sprintf("%sMATCH Middle Name: left '%s' vs. right '%s'\n",
-			($middle_name_matches) ? "" : "NO_",
-			$left_middle_name,
-			$right_middle_name)) if $debug;
 
 	if ($gender eq "female") {
 		printDebug($DBG_NONE,
@@ -979,7 +1128,8 @@ sub compareNames($$$$$$) {
 		return 0;
 	}
 
-	return ($first_name_matches && $middle_name_matches && $last_name_matches);
+	recordNameCompare($left_profile_id, $right_profile_id, $last_name_matches) if ($cache_result);
+	return $last_name_matches;
 }
 
 #
@@ -1350,21 +1500,39 @@ sub mergeProfiles($$$$) {
 	(my $sec, my $min, my $hour, my $mday, my $mon, my $year, my $wday, my $yday, my $isdst) = localtime(time);
 
 	if ($result->is_success) {
-		printDebug($DBG_PROGRESS, ": MERGING $id1 and $id2\n");
-		write_file($env{'merge_log_file'},
-				sprintf("%4d-%02d-%02d %02d:%02d:%02d :: %s :: %s :: Merged %s with %s\n",
- 					$year+1900, $mon+1, $mday, $hour, $min, $sec,
-					$env{'username'}, $desc, $id1_url, $id2_url), 1);
-		$env{'matches'}++;
-		$new_tree_conflicts{$id1} = 1;
+		printDebug($DBG_PROGRESS, sprintf(": MERGING %s and %s\n", $id1, $id2));
+
+		# This happens if you try to merge two private profiles
+		if ($result->decoded_content =~ /merge requested/i) {
+			my $id1_public = checkPublic($id1);
+			my $id2_public = checkPublic($id2);
+
+			# Try to make both profiles public, if it works then do the merge again
+			if ($id1_public && $id2_public) {
+				sleepIfNeeded();
+				my $result = new HTTP::Response;
+				$result = $m->post($merge_url_api);
+				updateGetHistory("mergeProfiles");
+				if ($result->is_success) {
+					if ($result->decoded_content =~ /merge requested/i) {
+						recordMergeRequest($id1, $id2);
+					} else {
+						recordMergeComplete($id1, $id2, $desc);
+					}
+				} else {
+					recordMergeFailure($id1, $id2, $result->decoded_content);
+				}
+
+			} else {
+				recordMergeRequest($id1, $id2);
+			}
+
+		# The merge was ok
+		} else {
+			recordMergeComplete($id1, $id2, $desc);
+		}
 	} else {
-		my $fail_string = sprintf("MERGE FAILED for %s at %4d-%02d-%02d %02d:%02d:%02d by %s. Failure reason '%s'<br />\n",
-					mergeURLHTML($id1, $id2),
-                                        $year+1900, $mon+1, $mday, $hour, $min, $sec,
-                                        $env{'username'},
-					$result->decoded_content);
-		printDebug($DBG_PROGRESS, ": MERGE FAILED for $id1 and $id2\n");
-		write_file($env{'merge_fail_file'}, $fail_string, 1);
+		recordMergeFailure($id1, $id2, $result->decoded_content);
 	}
 }
 
@@ -1382,16 +1550,21 @@ sub compareAllProfiles($$) {
 		for (my $j = $i + 1; $j <= $#profiles_array; $j++) {
 			#printDebug($DBG_NONE, "INSIDE LOOP: $j => $profiles_array[$j]\n");
 			(my $j_id, my $j_name, my $gender) = split(/:/, $profiles_array[$j]);
+			printDebug($DBG_PROGRESS, "TREE_CONFLICT_COMPARE: $text\[$i] $i_name vs. $text\[$j] $j_name");
+			next if (nameCompareResultCached($i_id, $j_id) eq "NOT_A_MATCH");
+			next if (compareResultCached($i_id, $j_id));
+
 			if (compareNames($gender, $i_name, $i_id, $j_name, $j_id, 0)) {
 				if (compareProfiles($i_id, $j_id)) {
-					printDebug($DBG_PROGRESS, "TREE_CONFLICT_COMPARE: $text\[$i] $i_name vs. $text\[$j] $j_name - MATCH\n");
+					printDebug($DBG_PROGRESS, ": MATCH\n");
 					mergeProfiles("https://www.geni.com/api/profiles/merge/$i_id,$j_id", $i_id, $j_id, "TREE_CONFLICT");
 					$match_count++;
 				} else {
-					printDebug($DBG_PROGRESS, "TREE_CONFLICT_COMPARE: $text\[$i] $i_name vs. $text\[$j] $j_name - NO_MATCH\n");
+					printDebug($DBG_PROGRESS, ": NO_MATCH\n");
+					recordNonMatch($i_id, $j_id);
 				}
 			} else {
-				printDebug($DBG_PROGRESS, "TREE_CONFLICT_COMPARE: $text\[$i] $i_name vs. $text\[$j] $j_name - NAME_MISMATCH\n");
+				printDebug($DBG_PROGRESS, ": NAME MISMATCH\n");
 			}
 			$profile_count++;
 		}
@@ -1404,7 +1577,7 @@ sub checkPublic($) {
 	my $profile_id	= shift;
 	return 0 if (!$profile_id);
 
-	if ($private_profiles{$profile_id}) {
+	if (exists $cache_private_profiles{$profile_id}) {
 		printDebug($DBG_NONE,
 			"\nPRIVATE_PROFILE: $profile_id is a known private profile\n");
 		return 0;
@@ -1418,13 +1591,14 @@ sub checkPublic($) {
 
 	my $profile_is_public = ($result->is_success && $result->decoded_content =~ /true/);
 	if ($profile_is_public) {
+		# todo: if we ever get a hunt_zombies API this is the scenario where we should run it
 		printDebug($DBG_NONE,
 			"\nPRIVATE_PROFILE: $profile_id was converted from private to public\n");
 	} else {
 		printDebug($DBG_NONE,
 			"\nPRIVATE_PROFILE: $profile_id could not be converted from private to public\n");
-		$private_profiles{$profile_id} = 1;
-		write_file($env{'private_profiles'}, "$profile_id\n", 1);
+		$cache_private_profiles{$profile_id} = 1;
+		write_file($env{'cache_private_profiles'}, "$profile_id\n", 1);
 	}
 
 	return $profile_is_public;
@@ -1477,7 +1651,7 @@ sub analyzeTreeConflict($$) {
 	$env{'circa_range'} = 5;
 	printDebug($DBG_PROGRESS, "Matched $match_count/$profile_count\n");
 
-	unlink $filename if $env{'delete_files'};
+	unlink $filename if ($env{'delete_files'} && $match_count);
 }
 
 # Resolve any new tree conflicts that were created. This could in turn
@@ -1490,6 +1664,7 @@ sub analyzeNewTreeConflicts() {
 		analyzeTreeConflict($id, "partner");
 		analyzeTreeConflict($id, "children");
 		delete $new_tree_conflicts{$id};
+		unlink "$env{'datadir'}/$id\.json" if ($env{'delete_files'});
 	}
 }
 
@@ -1594,6 +1769,7 @@ sub analyzeTreeConflictRecursive($) {
 	analyzeTreeConflict($profile_id, "siblings");
 	analyzeTreeConflict($profile_id, "partner");
 	analyzeTreeConflict($profile_id, "children");
+	unlink "$env{'datadir'}/$profile_id\.json" if ($env{'delete_files'});
 
 	my @fathers, my @mothers, my @spouses, my @sons, my @daughters, my @brothers, my @sisters;
 	my $filename = "$env{'datadir'}/$profile_id\.json";
@@ -1615,6 +1791,7 @@ sub analyzeTreeConflictRecursive($) {
 		analyzeTreeConflict($id, "parent");
 		analyzeTreeConflict($id, "siblings");
 		analyzeTreeConflict($id, "partner");
+		unlink "$env{'datadir'}/$id\.json" if ($env{'delete_files'});
 	}
 
 	my @siblings;
@@ -1625,6 +1802,7 @@ sub analyzeTreeConflictRecursive($) {
 		printDebug($DBG_PROGRESS, "SIBLING: $id\n");
 		analyzeTreeConflict($id, "partner");
 		analyzeTreeConflict($id, "children");
+		unlink "$env{'datadir'}/$id\.json" if ($env{'delete_files'});
 	}
 
 	my @children;
@@ -1635,6 +1813,7 @@ sub analyzeTreeConflictRecursive($) {
 		printDebug($DBG_PROGRESS, "CHILD: $id\n");
 		analyzeTreeConflict($id, "partner");
 		analyzeTreeConflict($id, "children");
+		unlink "$env{'datadir'}/$id\.json" if ($env{'delete_files'});
 	}
 
 	printDebug($DBG_PROGRESS, "$env{'matches'} matches via immediate family members\n");
@@ -1646,11 +1825,13 @@ sub analyzeTreeConflictRecursive($) {
 sub analyzePendingMerge($$) {
 	my $id1			= shift;
 	my $id2			= shift;
+	return if (compareResultCached($id1, $id2));
 
 	if (compareProfiles($id1, $id2)) {
 		mergeProfiles("https://www.geni.com/api/profiles/merge/$id1,$id2", $id1, $id2, "PENDING_MERGE");
 	} else {
 		printDebug($DBG_PROGRESS, ": NOT A MATCH\n");
+		recordNonMatch($id1, $id2);
 	}
 }
 
@@ -1814,16 +1995,18 @@ sub traverseJSONPages($$$$) {
 				analyzePendingMerge($json_list_entry->{'profiles'}->[0], $json_list_entry->{'profiles'}->[1]);
 			} elsif ($type eq "TREE_CONFLICTS") {
 				my $conflict_type = $json_list_entry->{'issue_type'};
+				my $profile_id = $json_list_entry->{'profile'};
 				if ($conflict_type eq "parent") {
-			 		analyzeTreeConflict($json_list_entry->{'profile'}, "parent");
-			 		analyzeTreeConflict($json_list_entry->{'profile'}, "siblings");
+			 		analyzeTreeConflict($profile_id, "parent");
+			 		analyzeTreeConflict($profile_id, "siblings");
 				} elsif ($conflict_type eq "partner") {
-			 		analyzeTreeConflict($json_list_entry->{'profile'}, "partner");
-			 		analyzeTreeConflict($json_list_entry->{'profile'}, "children");
+			 		analyzeTreeConflict($profile_id, "partner");
+			 		analyzeTreeConflict($profile_id, "children");
 				} else {
 					printDebug($DBG_PROGRESS, "ERROR: Unknown tree conflict type '$conflict_type'\n");
 					next;
 				}
+				unlink "$env{'datadir'}/$profile_id\.json" if ($env{'delete_files'});
 
 				analyzeNewTreeConflicts();
 			} elsif ($type eq "TREE_MATCHES") {
@@ -1842,6 +2025,7 @@ sub traverseJSONPages($$$$) {
 				int(($loop_run_time % 3600) / 60),
 			int($loop_run_time % 60)));
 		printDebug($DBG_PROGRESS, "$env{'matches'} matches out of $env{'profiles'} profiles so far\n\n");
+		loadCache();
 	}
 
 	printDebug($DBG_PROGRESS, "$env{'matches'} matches out of $env{'profiles'} profiles\n\n");
@@ -1975,7 +2159,9 @@ sub main() {
 		if (-e $env{'default_login'}) {
 			open (INF, $env{'default_login'}) or die("ERROR: can't open $env{'default_login'}");
 			$env{'username'} = <INF>;
+			chomp($env{'username'});
 			$env{'password'} = <INF>;
+			chomp($env{'password'});
 			close INF;
 		} else {
 			print "username: ";
@@ -1983,23 +2169,31 @@ sub main() {
 		}
 	}
 
-	$env{'username'}	=~ /^(.*)\@/;
-	$env{'username_short'}	= $1;
-	$env{'datadir'} 	= "script_data";
-	$env{'logdir'}		= "logs";
-	$env{'merge_log_file'}	= "merge_log.html";
-	$env{'merge_fail_file'}	= "merge_fail.html";
-	$env{'private_profiles'}= "private_profiles.txt";
-	$env{'log_file'}	= "$env{'logdir'}/logfile_" . dateHourMinuteSecond() . ".html";
+	$env{'username'}		=~ /^(.*)\@/;
+	$env{'username_short'}		= $1;
+	$env{'datadir'} 		= "script_data";
+	$env{'logdir'}			= "logs";
+	$env{'merge_log_file'}		= "merge_log.html";
+	$env{'merge_fail_file'}		= "merge_fail.html";
+	$env{'cache_merge_request'}	= "cache_merge_request.txt";
+	$env{'cache_merge_fail'}	= "cache_merge_fail.txt";
+	$env{'cache_no_match'}		= "cache_no_match.txt";
+	$env{'cache_name_mismatch'}	= "cache_name_mismatch.txt";
+	$env{'cache_private_profiles'}	= "cache_private_profiles.txt";
+	$env{'log_file'}		= "$env{'logdir'}/logfile_" . dateHourMinuteSecond() . ".html";
 
 	if ($run_from_cgi) {
-		$env{'home_dir'}	= "/home/geni/www";
-		$env{'user_home_dir'}	= "$env{'home_dir'}/$env{'username_short'}";
-		$env{'datadir'} 	= "$env{'user_home_dir'}/script_data";
-		$env{'logdir'}		= "$env{'user_home_dir'}/logs";
-		$env{'merge_log_file'}	= "$env{'home_dir'}/merge_log.html";
-		$env{'merge_fail_file'}	= "$env{'home_dir'}/merge_fail.html";
-		$env{'private_profiles'}= "$env{'home_dir'}/private_profiles.txt";
+		$env{'home_dir'}		= "/home/geni/www";
+		$env{'user_home_dir'}		= "$env{'home_dir'}/$env{'username_short'}";
+		$env{'datadir'} 		= "$env{'user_home_dir'}/script_data";
+		$env{'logdir'}			= "$env{'user_home_dir'}/logs";
+		$env{'merge_log_file'}		= "$env{'home_dir'}/merge_log.html";
+		$env{'merge_fail_file'}		= "$env{'home_dir'}/merge_fail.html";
+		$env{'cache_merge_request'}	= "$env{'home_dir'}/cache_merge_request.txt";
+		$env{'cache_merge_fail'}	= "$env{'home_dir'}/cache_merge_fail.txt";
+		$env{'cache_no_match'}		= "$env{'home_dir'}/cache_no_match.txt";
+		$env{'cache_name_mismatch'}	= "$env{'home_dir'}/cache_name_mismatch.txt";
+		$env{'cache_private_profiles'}	= "$env{'home_dir'}/cache_private_profiles.txt";
 		system "rm -rf $env{'datadir'}/*";
 		system "rm -rf $env{'logdir'}/*";
 		(mkdir $env{'home_dir'}, 0755) if !(-e $env{'home_dir'});
@@ -2011,14 +2205,9 @@ sub main() {
 	(mkdir $env{'datadir'}, 0755) if !(-e $env{'datadir'});
 	(mkdir $env{'logdir'}, 0755) if !(-e $env{'logdir'});
 	write_file($env{'log_file'}, "<html><head><meta http-equiv=\"refresh\" content=\"60\"></head><pre>\n", 0);
+	write_file($env{'merge_log_file'}, "<pre>", 0) if !(-e $env{'merge_log_file'});
 	write_file($env{'merge_fail_file'}, "<html><head><title>geni-automerge Failed Merges</title></head><pre>", 0) if !(-e $env{'merge_fail_file'}),
-
-	open(FH, $env{'private_profiles'});
-	while (<FH>) {
-		chomp();
-		$private_profiles{$_} = 1;
-	}
-	close FH;
+	loadCache();
 
 	if ($env{'password'} eq "") {
 		if ($run_from_cgi) {
@@ -2059,10 +2248,6 @@ sub main() {
 	} elsif ($env{'action'} eq "tree_conflicts_recursive") {
 		validateProfileID($left_id);
 		analyzeTreeConflictRecursive($left_id);
-#		do {
-#			$env{'matches'} = 0;
-#			traverseJSONPages($range_begin, $range_end, "TREE_CONFLICTS", $left_id);
-#		} while ($env{'matches'} > 0);
 
 	} elsif ($env{'action'} eq "tree_conflict") {
 		validateProfileID($left_id);
@@ -2070,6 +2255,7 @@ sub main() {
 		analyzeTreeConflict($left_id, "siblings");
 		analyzeTreeConflict($left_id, "partner");
 		analyzeTreeConflict($left_id, "children");
+		unlink "$env{'datadir'}/$left_id\.json" if ($env{'delete_files'});
 
 	} elsif ($env{'action'} eq "tree_matches") {
 		printDebug($DBG_PROGRESS, "NOTE: The -all option is not supported for Tree Matches\n") if $env{'all_of_geni'};
@@ -2105,6 +2291,7 @@ sub main() {
 		analyzeTreeConflict($left_id, "siblings");
 		analyzeTreeConflict($left_id, "partner");
 		analyzeTreeConflict($left_id, "children");
+		unlink "$env{'datadir'}/$left_id\.json" if ($env{'delete_files'});
 		analyzeTreeConflictRecursive($left_id);
 
 	} elsif ($env{'action'} eq "check_public") {
@@ -2131,8 +2318,8 @@ __END__
 46,805,758 big tree profiles on 10/29/2010
 
 TODO
-- test the new check_public API
-	- if we check_public and it fails store that in a file somewhere so we don't do it over and over
+- improve circa range for older profiles
+- for tree conflicts run check_public if needed.  Note we need an API change from Amos before we can do this
 - test half-siblings once they fix this in the API
 - 6000000007224268070 vs 6000000003243493709 has a profile with the birthdate as part of the name
   We could fix this.
