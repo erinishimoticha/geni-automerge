@@ -47,7 +47,7 @@ sub fix_merge_log() {
 }
 
 sub fix_private_profiles() {
-	my $filename = "private_profiles.txt";
+	my $filename = "cache_private_profiles.txt";
 	if (!(-e $filename)) {
 		print "ERROR: '$filename' does not exist\n";
 		return;

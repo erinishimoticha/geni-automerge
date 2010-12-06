@@ -12,8 +12,26 @@
 use strict;
 my $rb = $ARGV[0];
 my $re = $ARGV[1];
+my $mode = $ARGV[2];
 my $api = 10;
 
+if ($mode ne "-tcs" && $mode ne "-pms") {
+	die("ERROR: mode must be either -tcs or -pms, you entered '$mode'\n\n");
+}
+
+for (my $i = $re; $i >= $rb; $i--) {
+	if ($mode eq "-tcs") {
+		if (-e "script_data/tree_conflicts_$i\.json") {
+			$re = $i;
+		}
+	} elsif ($mode eq "-pms") {
+		if (-e "script_data/merges_$i\.json") {
+			$re = $i;
+		}
+	}
+}
+
+print "$re -> $rb\n";
 for (my $i = $re; $i >= $rb; $i--) {
 	print "./geni-automerge.pl -tcs -mlt -api $api -rb $i -re $i\n";
 	system "./geni-automerge.pl -tcs -mlt -api $api -rb $i -re $i";

@@ -2007,8 +2007,6 @@ sub traverseJSONPages($$$$) {
 					next;
 				}
 				unlink "$env{'datadir'}/$profile_id\.json" if ($env{'delete_files'});
-
-				analyzeNewTreeConflicts();
 			} elsif ($type eq "TREE_MATCHES") {
 				analyzeTreeMatch(0);
 			} elsif ($type eq "DATA_CONFLICTS") {
@@ -2206,7 +2204,7 @@ sub main() {
 	(mkdir $env{'logdir'}, 0755) if !(-e $env{'logdir'});
 	write_file($env{'log_file'}, "<html><head><meta http-equiv=\"refresh\" content=\"60\"></head><pre>\n", 0);
 	write_file($env{'merge_log_file'}, "<pre>", 0) if !(-e $env{'merge_log_file'});
-	write_file($env{'merge_fail_file'}, "<html><head><title>geni-automerge Failed Merges</title></head><pre>", 0) if !(-e $env{'merge_fail_file'}),
+	write_file($env{'merge_fail_file'}, "<html><head><title>geni-automerge Failed Merges</title></head><pre>", 0) if !(-e $env{'merge_fail_file'});
 	loadCache();
 
 	if ($env{'password'} eq "") {
