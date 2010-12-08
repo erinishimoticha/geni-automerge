@@ -820,22 +820,28 @@ sub doubleMetaphoneCompare($$) {
 	# Double metaphone only looks at the first four syllables so comparing two
 	# names with multiple words could give false positives.  Better to be safe
 	# and just declare them not a match.
-	return 0 if ($left_name =~ / / || $right_name =~ / /);
+	if ($left_name =~ / / || $right_name =~ / /) {
+		return 0;
+	}
 
 	# This should never happen but just to be safe
-	return 0 if ($left_name eq "" || $right_name eq "");
+	if ($left_name eq "" || $right_name eq "") {
+		return 0;
+	}
 
 	# If one of the names is just an initial then bail out
-	return 0 if ($left_name =~ /^.$/ || $right_name =~ /^.$/);
+	if ($left_name =~ /^.$/ || $right_name =~ /^.$/) {
+		return 0;
+	}
 
 	# Non-english names give too many false positives so if the name is full
 	# of funky characters then don't even bother running metaphone.
-	return 0 if (oddCharCount($left_name) > 2 || oddCharCount($right_name) > 2);
+	if (oddCharCount($left_name) > 2 || oddCharCount($right_name) > 2) {
+		return 0;
+	}
 
 	(my $left_code1, my $left_code2) = double_metaphone($left_name);
 	(my $right_code1, my $right_code2) = double_metaphone($right_name);
-	#printf("\n%s: %s %s\n", $left_name, $left_code1, $left_code2);
-	#printf("%s: %s %s\n", $right_name, $right_code1, $right_code2);
 
 	return (($left_code1 eq $right_code1) || ($left_code1 eq $right_code2) || ($left_code2 eq $right_code1) ||
 		($left_code2 eq $right_code2 && $left_code2));
@@ -944,6 +950,12 @@ sub compareResultCached($$) {
 }
 
 sub loadCache() {
+	undef %cache_private_profiles;
+	undef %cache_merge_request;
+	undef %cache_merge_fail;
+	undef %cache_no_match;
+	undef %cache_name_mismatch;
+
 	open(FH, $env{'cache_private_profiles'});
 	while (<FH>) {
 		chomp();
@@ -982,12 +994,12 @@ sub loadCache() {
 	close FH;
 }
 
-
 sub compareNamesGuts($$$) {
 	my $compare_initials = shift;
 	my $left_name	= shift;
 	my $right_name	= shift;
 
+	return 0 if ($left_name =~ /living/ || $right_name =~ /living/);
 	return 1 if $left_name && !$right_name;
 	return 1 if !$left_name && $right_name;
 	return 1 if $left_name eq $right_name;
@@ -1061,7 +1073,9 @@ sub compareNames($$$$$$) {
 	}
 
 	# It one name is blank then be conservative and return false
-	return 0 if (!$left_name || !$right_name);
+	if (!$left_name || !$right_name) {
+		return 0;
+	}
 
 	(my $left_first_name, my $left_middle_name, my $left_last_name, my $left_maiden_name) = nameToFirstMiddleLastMaiden($left_name); 
 	(my $right_first_name, my $right_middle_name, my $right_last_name, my $right_maiden_name) = nameToFirstMiddleLastMaiden($right_name); 
@@ -1072,7 +1086,9 @@ sub compareNames($$$$$$) {
 			($first_name_matches) ? "" : "NO_",
 			$left_first_name,
 			$right_first_name)) if $debug;
-	return 0 if (!$first_name_matches);
+	if (!$first_name_matches) {
+		return 0;
+	}
 
 	my $middle_name_matches = compareNamesGuts(1, $left_middle_name, $right_middle_name);
 	printDebug($DBG_NONE,
@@ -1080,7 +1096,9 @@ sub compareNames($$$$$$) {
 			($middle_name_matches) ? "" : "NO_",
 			$left_middle_name,
 			$right_middle_name)) if $debug;
-	return 0 if (!$middle_name_matches);
+	if (!$middle_name_matches) {
+		return 0;
+	}
 
 	# If the female only has a last name or only has a maiden name then try to determine the other
 	if ($gender eq "female") {
@@ -1317,11 +1335,15 @@ sub getJSON($$$$) {
 		my $try_again = 0;
 		$try_again = 1 if ($id1 && checkPublic($id1));
 		$try_again = 1 if ($id2 && checkPublic($id2));
-		return 0 if (!$try_again);
+		if (!$try_again) {
+			return 0;
+		}
 
 		unlink $filename;
 		getPage($filename, $url);
-		return 0 if (jsonSanityCheck($filename) == 0 || jsonIsPrivate($filename));
+		if (jsonSanityCheck($filename) == 0 || jsonIsPrivate($filename)) {
+			return 0;
+		}
 	}
 
 	open (INF,$filename);
@@ -1347,7 +1369,9 @@ sub compareProfiles($$) {
 	my $profiles_url = "https://www.geni.com/api/profiles/compare/$id1,$id2?only_ids=true";
 	my $filename = sprintf("$env{'datadir'}/%s-%s.json", $id1, $id2);
 	my $json_text = getJSON($filename, $profiles_url, $id1, $id2);
-	return 0 if (!$json_text);
+	if (!$json_text) {
+		return 0;
+	}
 	printDebug($DBG_NONE, "\nComparing profile $id1_url to profile $id2_url\n");
 
 	my $left_profile = new profile;
@@ -1575,7 +1599,9 @@ sub compareAllProfiles($$) {
 
 sub checkPublic($) {
 	my $profile_id	= shift;
-	return 0 if (!$profile_id);
+	if (!$profile_id) {
+		return 0;
+	}
 
 	if (exists $cache_private_profiles{$profile_id}) {
 		printDebug($DBG_NONE,
@@ -1618,7 +1644,9 @@ sub analyzeTreeConflict($$) {
 	my $filename = "$env{'datadir'}/$profile_id\.json";
 	my $url = "https://www.geni.com/api/profiles/immediate_family/$profile_id?only_ids=true";
 	my $json_profile = getJSON($filename, $url, $profile_id, 0);
-	return 0 if (!$json_profile);
+	if (!$json_profile) {
+		return 0;
+	}
 
 	jsonToFamilyArrays($json_profile, $profile_id, \@fathers, \@mothers, \@spouses, \@sons, \@daughters, \@brothers, \@sisters);
 
@@ -1775,7 +1803,9 @@ sub analyzeTreeConflictRecursive($) {
 	my $filename = "$env{'datadir'}/$profile_id\.json";
 	my $url = "https://www.geni.com/api/profiles/immediate_family/$profile_id?only_ids=true";
 	my $json_profile = getJSON($filename, $url, $profile_id, 0);
-	return 0 if (!$json_profile);
+	if (!$json_profile) {
+		return 0;
+	}
 
 	# Then build arrays of all the immediate family members of the starting profile
 	jsonToFamilyArrays($json_profile, $profile_id, \@fathers, \@mothers, \@spouses, \@sons, \@daughters, \@brothers, \@sisters);
@@ -1961,7 +1991,9 @@ sub traverseJSONPages($$$$) {
 	my $filename = "$env{'datadir'}/$api_action\_$range_end\.json";
 	my $url = apiURL($api_action, $range_end, $focus_id);
 	my $json_page = getJSON($filename, $url, 0, 0);
-	return 0 if (!$json_page);
+	if (!$json_page) {
+		return 0;
+	}
 
 	my $next_url = "";
 	while ($url ne "") {
