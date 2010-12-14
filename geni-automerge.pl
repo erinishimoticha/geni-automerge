@@ -1801,6 +1801,7 @@ sub jsonToFamilyArrays($$$$$$$$$) {
 			my $rel = $json_profile->{'nodes'}->{$i}->{'edges'}->{$j}->{'rel'};
 			my $gender = $json_profile->{'nodes'}->{$j}->{'gender'};
 			my $id = $json_profile->{'nodes'}->{$j}->{'id'};
+			$id =~ s/profile-//;
 			my $first_name = $json_profile->{'nodes'}->{$j}->{'first_name'};
 			my $middle_name = $json_profile->{'nodes'}->{$j}->{'middle_name'};
 			my $last_name = $json_profile->{'nodes'}->{$j}->{'last_name'};
@@ -2104,6 +2105,8 @@ sub traverseJSONPages($$$$) {
 			} elsif ($type eq "TREE_CONFLICTS") {
 				my $conflict_type = $json_list_entry->{'issue_type'};
 				my $profile_id = $json_list_entry->{'profile'};
+				$profile_id =~ s/profile-//;
+
 				if ($conflict_type eq "parent") {
 			 		analyzeTreeConflict($profile_id, "parent");
 			 		analyzeTreeConflict($profile_id, "siblings");
