@@ -18,7 +18,7 @@ binmode STDERR, ":utf8";
 
 # globals and constants
 my (%env, %debug, %blacklist_managers, @get_history, %new_tree_conflicts);
-my (%cache_private_profiles, %cache_merge_request, %cache_merge_fail, %cache_no_match, %cache_name_mismatch);
+my (%cache_public_profiles, %cache_private_profiles, %cache_merge_request, %cache_merge_fail, %cache_no_match, %cache_name_mismatch);
 my $m = WWW::Mechanize->new(autocheck => 0);
 my $DBG_NONE			= "DBG_NONE"; # Normal output
 my $DBG_PROGRESS		= "DBG_PROGRESS";
@@ -54,6 +54,7 @@ sub init(){
 	$env{'loop'}			= 0;
 	$env{'direction'}		= "asc"; # Must be asc or desc
 	$env{'delete_files'}		= 1;
+	$env{'G_profiles'}		= 0;
 
 	$debug{"file_" . $DBG_NONE}		= 1;
 	$debug{"file_" . $DBG_PROGRESS}		= 1;
@@ -724,7 +725,13 @@ sub getMaleLastNames($) {
 	my $profile_id = shift;
 
 	my $filename = "$env{'datadir'}/$profile_id\.json";
-	my $url = "https://www.geni.com/api/profiles/immediate_family/$profile_id?only_ids=true";
+
+	my $url;
+	if ($env{'G_profiles'}) {
+		$url = "https://www.geni.com/api/profile-G$profile_id/immediate-family?only_ids=true";
+	} else {
+		$url = "https://www.geni.com/api/profile-$profile_id/immediate-family?only_ids=true";
+	}
 	my $json_profile = getJSON($filename, $url, $profile_id, 0);
 	return "" if (!$json_profile);
 
@@ -836,7 +843,7 @@ sub doubleMetaphoneCompare($$) {
 
 	# Non-english names give too many false positives so if the name is full
 	# of funky characters then don't even bother running metaphone.
-	if (oddCharCount($left_name) > 2 || oddCharCount($right_name) > 2) {
+	if (oddCharCount($left_name) > 1 || oddCharCount($right_name) > 1) {
 		return 0;
 	}
 
@@ -951,6 +958,7 @@ sub compareResultCached($$) {
 
 sub loadCache() {
 	undef %cache_private_profiles;
+	undef %cache_public_profiles;
 	undef %cache_merge_request;
 	undef %cache_merge_fail;
 	undef %cache_no_match;
@@ -960,6 +968,13 @@ sub loadCache() {
 	while (<FH>) {
 		chomp();
 		$cache_private_profiles{$_} = 1;
+	}
+	close FH;
+
+	open(FH, $env{'cache_public_profiles'});
+	while (<FH>) {
+		chomp();
+		$cache_public_profiles{$_} = 1;
 	}
 	close FH;
 
@@ -999,10 +1014,18 @@ sub compareNamesGuts($$$) {
 	my $left_name	= shift;
 	my $right_name	= shift;
 
-	return 0 if ($left_name =~ /living/ || $right_name =~ /living/);
-	return 1 if $left_name && !$right_name;
-	return 1 if !$left_name && $right_name;
-	return 1 if $left_name eq $right_name;
+	if ($left_name =~ /living/ || $right_name =~ /living/) {
+		return 0;
+	}
+	if ($left_name && !$right_name) {
+		return 1;
+	}
+	if (!$left_name && $right_name) {
+		return 1;
+	}
+	if ($left_name eq $right_name) {
+		return 1;
+	}
 
 	# This can only happen if we're looking at a profile with multiple middle names.
 	# If that is the case then don't consider "R. vs. Robert" a match.  The reason
@@ -1022,9 +1045,16 @@ sub compareNamesGuts($$$) {
 	# 'sarah dabney taylor (strother)' vs. right 'sarah pannill dabney taylor (strother)'
 	foreach my $left_name_component (split(/\s/, $left_name)) {
 		foreach my $right_name_component (split(/\s/, $right_name)) {
-			return 1 if $left_name_component eq $right_name_component;
-			return 1 if $compare_initials && initialVsWholeMatch($left_name_component, $right_name_component);
-			return 1 if doubleMetaphoneCompare($left_name_component, $right_name_component);
+			
+			if ($left_name_component eq $right_name_component) {
+				return 1;
+			}
+			if ($compare_initials && initialVsWholeMatch($left_name_component, $right_name_component)) {
+				return 1;
+			}
+			if (doubleMetaphoneCompare($left_name_component, $right_name_component)) {
+				return 1;
+			}
 		}
 	}
 	return 0;
@@ -1034,6 +1064,11 @@ sub updateLastMaidenNames($$$) {
 	my $last_name	= shift;
 	my $maiden_name	= shift;
 	my $profile_id	= shift;
+
+	# If the profile is private we can't get to the data we need to do this so go ahead and return
+	if (!checkPublic($profile_id)) {
+		return ($last_name, $maiden_name);
+	}
 
 	(my $father_last_name, my $husband_last_name) = getMaleLastNames($profile_id);
 
@@ -1366,7 +1401,12 @@ sub compareProfiles($$) {
 		printDebug($DBG_PROGRESS, "ERROR: compareProfiles was given an invalid id1 '$id1' or id2 '$id2'\n");
 		return 0;
 	}
-	my $profiles_url = "https://www.geni.com/api/profiles/compare/$id1,$id2?only_ids=true";
+	my $profiles_url;
+	if ($env{'G_profiles'}) {
+		$profiles_url = "https://www.geni.com/api/profile-G$id1/compare/profile-G$id2?only_ids=true";
+	} else {
+		$profiles_url = "https://www.geni.com/api/profile-$id1/compare/profile-$id2?only_ids=true";
+	}
 	my $filename = sprintf("$env{'datadir'}/%s-%s.json", $id1, $id2);
 	my $json_text = getJSON($filename, $profiles_url, $id1, $id2);
 	if (!$json_text) {
@@ -1419,7 +1459,7 @@ sub compareProfiles($$) {
 			foreach my $manager_line (@{$json_profile->{'focus'}->{'managers'}}) { 
 				if ($manager_line =~ /profiles\/(.*)$/) { 
 					push @managers, split(/,/, $1); 
-				} elsif ($manager_line =~ /^(\d+)$/) { 
+				} elsif ($manager_line =~ /^profile-(\d+)$/) { 
 					push @managers, $1; 
 				} else { 
 					gracefulExit("ERROR: Manager line '$manager_line' is invalid.\n"); 
@@ -1444,7 +1484,6 @@ sub compareProfiles($$) {
 			}
 		}
 
-		my $profile_id = $json_profile->{'focus'}->{'id'};
 		$geni_profile->first_name($json_profile->{'focus'}->{'first_name'});
 		$geni_profile->middle_name($json_profile->{'focus'}->{'middle_name'});
 		$geni_profile->last_name($json_profile->{'focus'}->{'last_name'});
@@ -1456,7 +1495,9 @@ sub compareProfiles($$) {
 		$geni_profile->death_year($json_profile->{'focus'}->{'death_year'});
 		$geni_profile->birth_date($json_profile->{'focus'}->{'birth_date'});
 		$geni_profile->birth_year($json_profile->{'focus'}->{'birth_year'});
-		$geni_profile->id($json_profile->{'focus'}->{'id'});
+		my $profile_id = $json_profile->{'focus'}->{'id'};
+		$profile_id =~ s/profile-//g;
+		$geni_profile->id($profile_id);
 		
 		my @fathers, my @mothers, my @spouses, my @sons, my @daughters, my @brothers, my @sisters;
 		jsonToFamilyArrays($json_profile, $profile_id, \@fathers, \@mothers, \@spouses, \@sons, \@daughters, \@brothers, \@sisters);
@@ -1508,11 +1549,18 @@ sub updateGetHistory($) {
 	printDebug($DBG_TIME, "updateGetHistory for $caller: $time_sec.$time_usec\n");
 }
 
-sub mergeProfiles($$$$) {
-	my $merge_url_api	= shift;
+sub mergeProfiles($$$) {
 	my $id1			= shift;
 	my $id2			= shift;
 	my $desc		= shift;
+	my $merge_url_api;
+
+	if ($env{'G_profiles'}) {
+		$merge_url_api	= "https://www.geni.com/api/profile-G$id1/merge/profile-G$id2";
+	} else {
+		$merge_url_api	= "https://www.geni.com/api/profile-$id1/merge/profile-$id2";
+	}
+
 	my $id1_url = "<a href=\"http://www.geni.com/people/id/$id1\">$id1</a>";
 	my $id2_url = "<a href=\"http://www.geni.com/people/id/$id2\">$id2</a>";
 
@@ -1581,7 +1629,7 @@ sub compareAllProfiles($$) {
 			if (compareNames($gender, $i_name, $i_id, $j_name, $j_id, 0)) {
 				if (compareProfiles($i_id, $j_id)) {
 					printDebug($DBG_PROGRESS, ": MATCH\n");
-					mergeProfiles("https://www.geni.com/api/profiles/merge/$i_id,$j_id", $i_id, $j_id, "TREE_CONFLICT");
+					mergeProfiles($i_id, $j_id, "TREE_CONFLICT");
 					$match_count++;
 				} else {
 					printDebug($DBG_PROGRESS, ": NO_MATCH\n");
@@ -1603,16 +1651,26 @@ sub checkPublic($) {
 		return 0;
 	}
 
+	if (exists $cache_public_profiles{$profile_id}) {
+		printDebug($DBG_NONE,
+			"\nPRIVATE_PROFILE (CACHED): $profile_id is a public profile\n");
+		return 1;
+	}
+
 	if (exists $cache_private_profiles{$profile_id}) {
 		printDebug($DBG_NONE,
-			"\nPRIVATE_PROFILE: $profile_id is a known private profile\n");
+			"\nPRIVATE_PROFILE (CACHED): $profile_id is a private profile\n");
 		return 0;
 	}
 
 	geniLogin() if !$env{'logged_in'};
 	sleepIfNeeded();
 	my $result = new HTTP::Response;
-	$result = $m->post("https://www.geni.com/api/profiles/check_public/$profile_id");
+	if ($env{'G_profiles'}) {
+		$result = $m->post("https://www.geni.com/api/profile-G$profile_id/check-public");
+	} else {
+		$result = $m->post("https://www.geni.com/api/profile-$profile_id/check-public");
+	}
 	updateGetHistory("checkPublic");
 
 	my $profile_is_public = ($result->is_success && $result->decoded_content =~ /true/);
@@ -1620,6 +1678,8 @@ sub checkPublic($) {
 		# todo: if we ever get a hunt_zombies API this is the scenario where we should run it
 		printDebug($DBG_NONE,
 			"\nPRIVATE_PROFILE: $profile_id was converted from private to public\n");
+		$cache_public_profiles{$profile_id} = 1;
+		write_file($env{'cache_public_profiles'}, "$profile_id\n", 1);
 	} else {
 		printDebug($DBG_NONE,
 			"\nPRIVATE_PROFILE: $profile_id could not be converted from private to public\n");
@@ -1642,7 +1702,12 @@ sub analyzeTreeConflict($$) {
 
 	my @fathers, my @mothers, my @spouses, my @sons, my @daughters, my @brothers, my @sisters;
 	my $filename = "$env{'datadir'}/$profile_id\.json";
-	my $url = "https://www.geni.com/api/profiles/immediate_family/$profile_id?only_ids=true";
+	my $url;
+	if ($env{'G_profiles'}) {
+		$url = "https://www.geni.com/api/profile-G$profile_id/immediate-family?only_ids=true";
+	} else {
+		$url = "https://www.geni.com/api/profile-$profile_id/immediate-family?only_ids=true";
+	}
 	my $json_profile = getJSON($filename, $url, $profile_id, 0);
 	if (!$json_profile) {
 		return 0;
@@ -1801,7 +1866,12 @@ sub analyzeTreeConflictRecursive($) {
 
 	my @fathers, my @mothers, my @spouses, my @sons, my @daughters, my @brothers, my @sisters;
 	my $filename = "$env{'datadir'}/$profile_id\.json";
-	my $url = "https://www.geni.com/api/profiles/immediate_family/$profile_id?only_ids=true";
+	my $url;
+	if ($env{'G_profiles'}) {
+		$url = "https://www.geni.com/api/profile-G$profile_id/immediate-family?only_ids=true";
+	} else {
+		$url = "https://www.geni.com/api/profile-$profile_id/immediate-family?only_ids=true";
+	}
 	my $json_profile = getJSON($filename, $url, $profile_id, 0);
 	if (!$json_profile) {
 		return 0;
@@ -1858,7 +1928,7 @@ sub analyzePendingMerge($$) {
 	return if (compareResultCached($id1, $id2));
 
 	if (compareProfiles($id1, $id2)) {
-		mergeProfiles("https://www.geni.com/api/profiles/merge/$id1,$id2", $id1, $id2, "PENDING_MERGE");
+		mergeProfiles($id1, $id2, "PENDING_MERGE");
 	} else {
 		printDebug($DBG_PROGRESS, ": NOT A MATCH\n");
 		recordNonMatch($id1, $id2);
@@ -1893,7 +1963,7 @@ sub stackProfiles($$) {
 		my $id_url = "<a href=\"http://www.geni.com/people/id/$id\">$id</a>";
 		printDebug($DBG_PROGRESS, "\nStacking Primary $primary_id: Stacking Secondary $id");
 		printDebug($DBG_NONE, "\nStacking Primary $primary_url: Stacking Secondary $id_url\n");
-		mergeProfiles("https://www.geni.com/api/profiles/merge/$primary_id,$id", $primary_id, $id, "STACKING_MERGE");
+		mergeProfiles($primary_id, $id, "STACKING_MERGE");
 	}
 }
 
@@ -1907,7 +1977,7 @@ sub rangeBeginEnd($$$$) {
 				$env{'datadir'}, $api_action);
 	# Delete the file so we'll recalculate max_page everytime
 	unlink $filename;
-	my $url = sprintf("https://www.geni.com/api/profiles/%s?collaborators=true&count=true%s",
+	my $url = sprintf("https://www.geni.com/api/profile/%s?collaborators=true&count=true%s",
 			$api_action,
 			$env{'all_of_geni'} ? "&all=true" : "");
 
@@ -1946,7 +2016,8 @@ sub apiURL($$$) {
 	my $focus_id	= shift;
 
 	# pass "only_ids=true" when they get the API fixed
-	return sprintf("https://www.geni.com/api/profiles/%s?%s&only_ids=true&order=last_modified_at&direction=%s&page=%s%s",
+	# Note: focus_id isn't supported by the API yet
+	return sprintf("https://www.geni.com/api/profile/%s?%s&only_ids=true&order=last_modified_at&direction=%s&page=%s%s",
 			$api_action,
 			$focus_id ? "focus_id=$focus_id" : "collaborators=true",
 			$env{'direction'},
@@ -1974,13 +2045,13 @@ sub traverseJSONPages($$$$) {
 		$api_action = "merges";
 
 	} elsif ($type eq "TREE_CONFLICTS") {
-		$api_action = "tree_conflicts";
+		$api_action = "tree-conflicts";
 
 	} elsif ($type eq "TREE_MATCHES") {
-		$api_action = "tree_matches";
+		$api_action = "tree-matches";
 
 	} elsif ($type eq "DATA_CONFLICTS") {
-		$api_action = "data_conflicts";
+		$api_action = "data-conflicts";
 
 	} else {
 		printDebug($DBG_PROGRESS, "ERROR: type '$type' is not supported\n");
@@ -2021,10 +2092,15 @@ sub traverseJSONPages($$$$) {
 		
 			if ($type eq "PENDING_MERGES") {
 				foreach my $private_ID (@{$json_list_entry->{'private'}}) {
+					$private_ID =~ s/profile-//;
 					checkPublic($private_ID);
 				}
 
-				analyzePendingMerge($json_list_entry->{'profiles'}->[0], $json_list_entry->{'profiles'}->[1]);
+				my $left_id = $json_list_entry->{'profiles'}->[0];
+				my $right_id = $json_list_entry->{'profiles'}->[1];
+				$left_id =~ s/profile-//;
+				$right_id =~ s/profile-//;
+				analyzePendingMerge($left_id, $right_id);
 			} elsif ($type eq "TREE_CONFLICTS") {
 				my $conflict_type = $json_list_entry->{'issue_type'};
 				my $profile_id = $json_list_entry->{'profile'};
@@ -2210,6 +2286,7 @@ sub main() {
 	$env{'cache_no_match'}		= "cache_no_match.txt";
 	$env{'cache_name_mismatch'}	= "cache_name_mismatch.txt";
 	$env{'cache_private_profiles'}	= "cache_private_profiles.txt";
+	$env{'cache_public_profiles'}	= "cache_public_profiles.txt";
 	$env{'log_file'}		= "$env{'logdir'}/logfile_" . dateHourMinuteSecond() . ".html";
 
 	if ($run_from_cgi) {
@@ -2224,6 +2301,7 @@ sub main() {
 		$env{'cache_no_match'}		= "$env{'home_dir'}/cache_no_match.txt";
 		$env{'cache_name_mismatch'}	= "$env{'home_dir'}/cache_name_mismatch.txt";
 		$env{'cache_private_profiles'}	= "$env{'home_dir'}/cache_private_profiles.txt";
+		$env{'cache_public_profiles'}	= "$env{'home_dir'}/cache_public_profiles.txt";
 		system "rm -rf $env{'datadir'}/*";
 		system "rm -rf $env{'logdir'}/*";
 		(mkdir $env{'home_dir'}, 0755) if !(-e $env{'home_dir'});
@@ -2267,6 +2345,7 @@ sub main() {
 		}
 		validateProfileID($left_id);
 		validateProfileID($right_id);
+		$env{'G_profiles'} = 1;
 		analyzePendingMerge($left_id, $right_id);
 
 	} elsif ($env{'action'} eq "tree_conflicts") {
@@ -2276,11 +2355,13 @@ sub main() {
 		} while ($env{'loop'});
 
 	} elsif ($env{'action'} eq "tree_conflicts_recursive") {
+		$env{'G_profiles'} = 1;
 		validateProfileID($left_id);
 		analyzeTreeConflictRecursive($left_id);
 
 	} elsif ($env{'action'} eq "tree_conflict") {
 		validateProfileID($left_id);
+		$env{'G_profiles'} = 1;
 		analyzeTreeConflict($left_id, "parent");
 		analyzeTreeConflict($left_id, "siblings");
 		analyzeTreeConflict($left_id, "partner");
@@ -2303,6 +2384,7 @@ sub main() {
 	} elsif ($env{'action'} eq "stack") {
 		validateProfileID($left_id);
 		stackProfiles($left_id, $right_id);
+		$env{'G_profiles'} = 1;
 
 	} elsif ($env{'action'} eq "data_conflicts") {
 		do {
@@ -2317,6 +2399,7 @@ sub main() {
 	} elsif ($env{'action'} eq "focal") {
 		validateProfileID($left_id);
 		stackProfiles($left_id, $right_id);
+		$env{'G_profiles'} = 1;
 		analyzeTreeConflict($left_id, "parent");
 		analyzeTreeConflict($left_id, "siblings");
 		analyzeTreeConflict($left_id, "partner");

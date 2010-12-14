@@ -13,10 +13,14 @@ use strict;
 my $rb = $ARGV[0];
 my $re = $ARGV[1];
 my $mode = $ARGV[2];
-my $api = 10;
+my $api = $ARGV[3]; 
 
 if ($mode ne "-tcs" && $mode ne "-pms") {
 	die("ERROR: mode must be either -tcs or -pms, you entered '$mode'\n\n");
+}
+
+if (!$api) {
+	die("ERROR: you must specify an api value via '-api X'\n\n");
 }
 
 for (my $i = $re; $i >= $rb; $i--) {
