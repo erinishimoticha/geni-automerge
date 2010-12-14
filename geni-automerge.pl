@@ -29,6 +29,7 @@ my $DBG_JSON			= "DBG_JSON";
 my $DBG_MATCH_DATE		= "DBG_MATCH_DATE";
 my $DBG_MATCH_BASIC		= "DBG_MATCH_BASIC";
 my $DBG_TIME			= "DBG_TIME";
+my %notamatch;
 
 our $CALLED_BY_TEST_SCRIPT;
 
@@ -39,9 +40,9 @@ if (!$CALLED_BY_TEST_SCRIPT) {
 
 sub init(){
 	# configuration
-	$env{'circa_range'}		= 5;
+	$env{'circa_range'}		= 1;
 	$env{'get_timeframe'}		= 10;
-	$env{'get_limit'}		= 39; # Amos has the limit set to 20 so we'll use 18 to have some breathing room
+	$env{'get_limit'}		= 19; # Amos has the limit set to 20 so we'll use 18 to have some breathing room
 	$env{'action'}			= "pending_merges";
 
 	# environment
@@ -55,6 +56,7 @@ sub init(){
 	$env{'direction'}		= "asc"; # Must be asc or desc
 	$env{'delete_files'}		= 1;
 	$env{'G_profiles'}		= 0;
+	$env{'no_merge_file'}   = "no_merge.txt";
 
 	$debug{"file_" . $DBG_NONE}		= 1;
 	$debug{"file_" . $DBG_PROGRESS}		= 1;
@@ -102,6 +104,19 @@ sub init(){
 	$blacklist_managers{"6000000009948172621"} = 1;
 	$blacklist_managers{"6000000007167930983"} = 1;
 	$blacklist_managers{"6000000007190994696"} = 1;
+
+	
+	open (INF,$env{'no_merge_file'});
+	while (<INF>) {
+		my ($id1,$id2) = split(/\t/,<INF>);
+		chomp $id2;
+		if ($id1) {
+			$notamatch{$id1}{$id2} = 1;
+			$notamatch{$id2}{$id1} = 1;
+			print ("not going to try to match $id1 with $id2\n");
+		}
+	}
+	close INF;
 }
 
 
@@ -2089,7 +2104,14 @@ sub traverseJSONPages($$$$) {
 		foreach my $json_list_entry (@{$json_page->{'results'}}) {
 			$env{'profiles'}++;
 			$page_profile_count++;
+
 			printDebug($DBG_PROGRESS, "Page $page/$range_end: Profile $page_profile_count: Overall Profile $env{'profiles'}");
+			if ($notamatch{$json_list_entry->{'profiles'}->[0]}{$json_list_entry->{'profiles'}->[1]} || 
+				$notamatch{$json_list_entry->{'profiles'}->[1]}{$json_list_entry->{'profiles'}->[0]}) {
+				printDebug($DBG_PROGRESS, ": NOT A MATCH from prev run\n");
+				next;
+			}
+		
 		
 			if ($type eq "PENDING_MERGES") {
 				foreach my $private_ID (@{$json_list_entry->{'private'}}) {
