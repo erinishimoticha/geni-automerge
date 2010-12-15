@@ -885,11 +885,79 @@ sub recordMergeComplete($$$) {
 	$new_tree_conflicts{$id1} = 1;
 }
 
+sub cacheWrite($$$$) {
+	my $type	= shift;
+	my $string	= shift;
+	my $key		= shift;
+	my $value	= shift;
+
+	if ($type eq "cache_public_profiles") {
+		$cache_public_profiles{$key} = $value;
+	} elsif ($type eq "cache_private_profiles") {
+		$cache_private_profiles{$key} = $value;
+	} elsif ($type eq "cache_merge_request") {
+		$cache_merge_request{$key} = $value;
+	} elsif ($type eq "cache_merge_fail") {
+		$cache_merge_fail{$key} = $value;
+	} elsif ($type eq "cache_no_match") {
+		$cache_no_match{$key} = $value;
+	} elsif ($type eq "cache_name_mismatch") {
+		$cache_name_mismatch{$key} = $value;
+	} else {
+		die("\n\nERROR: cacheWrite unknown type '$type'\n\n");
+	}
+
+	write_file($env{$type}, "$string\n", 1);
+}
+
+sub cacheExists($$) {
+	my $type	= shift;
+	my $key		= shift;
+
+	if ($type eq "cache_public_profiles") {
+		return (exists $cache_public_profiles{$key});
+	} elsif ($type eq "cache_private_profiles") {
+		return (exists $cache_private_profiles{$key});
+	} elsif ($type eq "cache_merge_request") {
+		return (exists $cache_merge_request{$key});
+	} elsif ($type eq "cache_merge_fail") {
+		return (exists $cache_merge_fail{$key});
+	} elsif ($type eq "cache_no_match") {
+		return (exists $cache_no_match{$key});
+	} elsif ($type eq "cache_name_mismatch") {
+		return (exists $cache_name_mismatch{$key});
+	} else {
+		die("\n\nERROR: cacheWrite unknown type '$type'\n\n");
+	}
+	return 0;
+}
+
+sub cacheRead($$) {
+	my $type	= shift;
+	my $key		= shift;
+
+	if ($type eq "cache_public_profiles") {
+		return $cache_public_profiles{$key};
+	} elsif ($type eq "cache_private_profiles") {
+		return $cache_private_profiles{$key};
+	} elsif ($type eq "cache_merge_request") {
+		return $cache_merge_request{$key};
+	} elsif ($type eq "cache_merge_fail") {
+		return $cache_merge_fail{$key};
+	} elsif ($type eq "cache_no_match") {
+		return $cache_no_match{$key};
+	} elsif ($type eq "cache_name_mismatch") {
+		return $cache_name_mismatch{$key};
+	} else {
+		die("\n\nERROR: cacheWrite unknown type '$type'\n\n");
+	}
+	return "";
+}
+
 sub recordMergeRequest($$) {
 	my $id1			= shift;
 	my $id2			= shift;
-	write_file($env{'cache_merge_request'}, "$id1:$id2\n", 1);
-	$cache_merge_request{"$id1:$id2"} = 1;
+	cacheWrite("cache_merge_request", "$id1:$id2", "$id1:$id2", 1);
 }
 
 sub recordMergeFailure($$$) {
@@ -904,15 +972,13 @@ sub recordMergeFailure($$$) {
 				$env{'username'}, $reason);
 	printDebug($DBG_PROGRESS, ": MERGE FAILED for $id1 and $id2\n");
 	write_file($env{'merge_fail_file'}, $fail_string, 1);
-	write_file($env{'cache_merge_fail'}, "$id1:$id2\n", 1);
-	$cache_merge_fail{"$id1:$id2"} = 1;
+	cacheWrite("cache_merge_fail", "$id1:$id2", "$id1:$id2", 1);
 }
 
 sub recordNonMatch($$) {
 	my $id1	= shift;
 	my $id2	= shift;
-	write_file($env{'cache_no_match'}, "$id1:$id2\n", 1);
-	$cache_no_match{"$id1:$id2"} = 1;
+	cacheWrite("cache_no_match", "$id1:$id2", "$id1:$id2", 1);
 }
 
 sub recordNameCompare($$$) {
@@ -920,16 +986,15 @@ sub recordNameCompare($$$) {
 	my $id2		= shift;
 	my $result	= shift;
 	$result = ($result ? "MATCH" : "NOT_A_MATCH");
-	write_file($env{'cache_name_mismatch'}, "$id1:$id2:$result\n", 1);
-	$cache_name_mismatch{"$id1:$id2"} = $result;
+	cacheWrite("cache_name_mismatch", "$id1:$id2:$result", "$id1:$id2", $result);
 }
 
 sub nameCompareResultCached($$) {
 	my $id1	= shift;
 	my $id2	= shift;
 
-	if (exists $cache_name_mismatch{"$id1:$id2"}) {
-		if ($cache_name_mismatch{"$id1:$id2"} eq "NOT_A_MATCH") {
+	if (cacheExists("cache_name_mismatch", "$id1:$id2")) {
+		if (cacheRead("cache_name_mismatch", "$id1:$id2") eq "NOT_A_MATCH") {
 			printDebug($DBG_PROGRESS, ": (CACHED) NAME MISMATCH\n");
 		} else {
 			printDebug($DBG_PROGRESS, ": (CACHED) NAME MATCH\n");
@@ -937,8 +1002,8 @@ sub nameCompareResultCached($$) {
 		return $cache_name_mismatch{"$id1:$id2"};
 	}
 
-	if (exists $cache_name_mismatch{"$id2:$id1"}) {
-		if ($cache_name_mismatch{"$id2:$id1"} eq "NOT_A_MATCH") {
+	if (cacheExists("cache_name_mismatch", "$id2:$id1")) {
+		if (cacheRead("cache_name_mismatch", "$id2:$id1") eq "NOT_A_MATCH") {
 			printDebug($DBG_PROGRESS, ": (CACHED) NAME MISMATCH\n");
 		} else {
 			printDebug($DBG_PROGRESS, ": (CACHED) NAME MATCH\n");
@@ -953,17 +1018,17 @@ sub compareResultCached($$) {
 	my $id1	= shift;
 	my $id2	= shift;
 
-	if (exists $cache_no_match{"$id1:$id2"} || exists $cache_no_match{"$id2:$id1"}) {
+	if (cacheExists("cache_no_match", "$id1:$id2") || cacheExists("cache_no_match", "$id2:$id1")) {
 		printDebug($DBG_PROGRESS, ": (CACHED) NOT A MATCH\n");
 		return 1;
 	}
 
-	if (exists $cache_merge_request{"$id1:$id2"} || exists $cache_merge_request{"$id2:$id1"}) {
+	if (cacheExists("cache_merge_request", "$id1:$id2") || cacheExists("cache_merge_request", "$id2:$id1")) {
 		printDebug($DBG_PROGRESS, ": (CACHED) MERGE REQUESTED\n");
 		return 1;
 	}
 
-	if (exists $cache_merge_fail{"$id1:$id2"} || exists $cache_merge_fail{"$id2:$id1"}) {
+	if (cacheExists("cache_merge_fail", "$id1:$id2") || cacheExists("cache_merge_fail", "$id2:$id1")) {
 		printDebug($DBG_PROGRESS, ": (CACHED) MERGE FAILED\n");
 		return 1;
 	}
@@ -1376,6 +1441,7 @@ sub getJSON($$$$) {
 
 	getPage($filename, $url);
 	if (jsonSanityCheck($filename) == 0) {
+		printDebug($DBG_PROGRESS, "JSON_SANITY_FAILED: $url\n");
 		unlink $filename if $env{'delete_files'};
 		return 0;
 
@@ -1391,7 +1457,13 @@ sub getJSON($$$$) {
 
 		unlink $filename;
 		getPage($filename, $url);
-		if (jsonSanityCheck($filename) == 0 || jsonIsPrivate($filename)) {
+
+		if (jsonIsPrivate($filename)) {
+			return 0;
+		}
+
+		if (jsonSanityCheck($filename) == 0) {
+			printDebug($DBG_PROGRESS, "JSON_SANITY_FAILED: $url\n");
 			return 0;
 		}
 	}
@@ -1666,15 +1738,13 @@ sub checkPublic($) {
 		return 0;
 	}
 
-	if (exists $cache_public_profiles{$profile_id}) {
-		printDebug($DBG_NONE,
-			"\nPRIVATE_PROFILE (CACHED): $profile_id is a public profile\n");
+	if (cacheExists("cache_public_profiles", "$profile_id")) {
+		printDebug($DBG_NONE, "\nPUBLIC_PROFILE (CACHED): $profile_id\n");
 		return 1;
 	}
 
-	if (exists $cache_private_profiles{$profile_id}) {
-		printDebug($DBG_NONE,
-			"\nPRIVATE_PROFILE (CACHED): $profile_id is a private profile\n");
+	if (cacheExists("cache_private_profiles", "$profile_id")) {
+		printDebug($DBG_NONE, "\nPRIVATE_PROFILE (CACHED): $profile_id\n");
 		return 0;
 	}
 
@@ -1693,13 +1763,11 @@ sub checkPublic($) {
 		# todo: if we ever get a hunt_zombies API this is the scenario where we should run it
 		printDebug($DBG_NONE,
 			"\nPRIVATE_PROFILE: $profile_id was converted from private to public\n");
-		$cache_public_profiles{$profile_id} = 1;
-		write_file($env{'cache_public_profiles'}, "$profile_id\n", 1);
+		cacheWrite("cache_public_profiles", "$profile_id", "$profile_id", 1);
 	} else {
 		printDebug($DBG_NONE,
 			"\nPRIVATE_PROFILE: $profile_id could not be converted from private to public\n");
-		$cache_private_profiles{$profile_id} = 1;
-		write_file($env{'cache_private_profiles'}, "$profile_id\n", 1);
+		cacheWrite("cache_private_profiles", "$profile_id", "$profile_id", 1);
 	}
 
 	return $profile_is_public;
@@ -1941,6 +2009,11 @@ sub analyzeTreeConflictRecursive($) {
 sub analyzePendingMerge($$) {
 	my $id1			= shift;
 	my $id2			= shift;
+
+	# This shouldn't happen but sometimes does due to a bug in
+	# geni's code that produces the pending merges list.
+	return if ($id1 eq $id2);
+
 	return if (compareResultCached($id1, $id2));
 
 	if (compareProfiles($id1, $id2)) {
