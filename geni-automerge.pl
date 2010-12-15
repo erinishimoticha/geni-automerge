@@ -1994,6 +1994,11 @@ sub analyzeTreeConflictRecursive($) {
 sub analyzePendingMerge($$) {
 	my $id1			= shift;
 	my $id2			= shift;
+
+	# This shouldn't happen but sometimes does due to a bug in
+	# geni's code that produces the pending merges list.
+	return if ($id1 eq $id2);
+
 	return if (compareResultCached($id1, $id2));
 
 	if (compareProfiles($id1, $id2)) {
