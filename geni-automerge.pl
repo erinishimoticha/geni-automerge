@@ -858,8 +858,16 @@ sub recordMergeComplete($$$) {
 	my $id1			= shift;
 	my $id2			= shift;
 	my $desc		= shift;
-	my $id1_url = "<a href=\"http://www.geni.com/people/id/$id1\">$id1</a>";
-	my $id2_url = "<a href=\"http://www.geni.com/people/id/$id2\">$id2</a>";
+	my $id1_url = "";
+	my $id2_url = "";
+
+	if ($env{'G_profiles'}) {
+		$id1_url = "<a href=\"http://www.geni.com/people/id/$id1\">$id1</a>";
+		$id2_url = "<a href=\"http://www.geni.com/people/id/$id2\">$id2</a>";
+	} else {
+		$id1_url = "<a href=\"http://www.geni.com/profile-$id1\">$id1</a>";
+		$id2_url = "<a href=\"http://www.geni.com/profile-$id2\">$id2</a>";
+	}
 	(my $sec, my $min, my $hour, my $mday, my $mon, my $year, my $wday, my $yday, my $isdst) = localtime(time);
 
 	write_file($env{'merge_log_file'},
@@ -1372,13 +1380,22 @@ sub comparePartners($$$$) {
 	printDebug($DBG_MATCH_BASIC, "Left Profile $partner_type:\n");
 	foreach my $person (split(/::/, $left_partners)) {
 		(my $person_id, my $person_name, my $person_gender) = split(/:/, $person);
-		printDebug($DBG_MATCH_BASIC, "- <a href=\"http://www.geni.com/people/id/$person_id\">$person_name</a>\n");
+		if ($env{'G_profiles'}) {
+			printDebug($DBG_MATCH_BASIC, "- <a href=\"http://www.geni.com/people/id/$person_id\">$person_name</a>\n");
+		} else {
+			printDebug($DBG_MATCH_BASIC, "- <a href=\"http://www.geni.com/profile-$person_id\">$person_name</a>\n");
+		}
 	}
 
 	printDebug($DBG_MATCH_BASIC, "Right Profile $partner_type:\n");
 	foreach my $person (split(/::/, $right_partners)) {
 		(my $person_id, my $person_name, my $person_gender) = split(/:/, $person);
-		printDebug($DBG_MATCH_BASIC, "- <a href=\"http://www.geni.com/people/id/$person_id\">$person_name</a>\n");
+		
+		if ($env{'G_profiles'}) {
+			printDebug($DBG_MATCH_BASIC, "- <a href=\"http://www.geni.com/people/id/$person_id\">$person_name</a>\n");
+		} else {
+			printDebug($DBG_MATCH_BASIC, "- <a href=\"http://www.geni.com/profile-$person_id\">$person_name</a>\n");
+		}
 	}
 
 	return 0;
@@ -1398,7 +1415,12 @@ sub avoidDuplicatesPush($$) {
 sub mergeURLHTML($$) {
 	my $id1			= shift;
 	my $id2			= shift;
-	return "<a href=\"http://www.geni.com/merge/compare/$id1?to=$id2\">$id1 and $id2</a>";
+	
+ 	# http://www.geni.com/profile-101/compare/profile-102
+	if ($env{'G_profiles'}) {
+		return "<a href=\"http://www.geni.com/merge/compare/$id1?to=$id2\">$id1 vs. $id2</a>";
+	}
+	return "<a href=\"http://www.geni.com/profile-$id1/compare/profile-$id2\">$id1 vs. $id2</a>";
 }
 
 sub getPage($$) {
@@ -1466,8 +1488,16 @@ sub getJSON($$$$) {
 sub compareProfiles($$) {
 	my $id1			= shift;
 	my $id2			= shift;
-	my $id1_url = "<a href=\"http://www.geni.com/people/id/$id1\">$id1</a>";
-	my $id2_url = "<a href=\"http://www.geni.com/people/id/$id2\">$id2</a>";
+	my $id1_url = "";
+	my $id2_url = "";
+
+	if ($env{'G_profiles'}) {
+		$id1_url = "<a href=\"http://www.geni.com/people/id/$id1\">$id1</a>";
+		$id2_url = "<a href=\"http://www.geni.com/people/id/$id2\">$id2</a>";
+	} else {
+		$id1_url = "<a href=\"http://www.geni.com/profile-$id1\">$id1</a>";
+		$id2_url = "<a href=\"http://www.geni.com/profile-$id2\">$id2</a>";
+	}
 
 	if (!$id1 || !$id2) {
 		printDebug($DBG_PROGRESS, "ERROR: compareProfiles was given an invalid id1 '$id1' or id2 '$id2'\n");
@@ -1484,7 +1514,7 @@ sub compareProfiles($$) {
 	if (!$json_text) {
 		return 0;
 	}
-	printDebug($DBG_NONE, "\nComparing profile $id1_url to profile $id2_url\n");
+	printDebug($DBG_NONE, sprintf("\nComparing %s ($id1_url, $id2_url)\n", mergeURLHTML($id1, $id2)));
 
 	my $left_profile = new profile;
 	my $right_profile= new profile;
@@ -1547,10 +1577,17 @@ sub compareProfiles($$) {
 		# Do not merge a profile managed by any of the blacklist_managers
 		foreach my $profile_id (@managers) {
 			if ($blacklist_managers{$profile_id}) {
-				printDebug($DBG_NONE,
-					sprintf("NO_MATCH: %s is managed by blacklist user %s\n",
-						($geni_profile == $left_profile) ? $id1_url : $id2_url,
-						"<a href=\"http://www.geni.com/people/id/$profile_id/\">$profile_id</a>\n"));
+				if ($env{'G_profiles'}) {
+					printDebug($DBG_NONE,
+						sprintf("NO_MATCH: %s is managed by blacklist user %s\n",
+							($geni_profile == $left_profile) ? $id1_url : $id2_url,
+							"<a href=\"http://www.geni.com/people/id/$profile_id/\">$profile_id</a>\n"));
+				} else {
+					printDebug($DBG_NONE,
+						sprintf("NO_MATCH: %s is managed by blacklist user %s\n",
+							($geni_profile == $left_profile) ? $id1_url : $id2_url,
+							"<a href=\"http://www.geni.com/profile-$profile_id/\">$profile_id</a>\n"));
+				}
 				unlink $filename if $env{'delete_files'};
 				return 0;
 			}
@@ -1626,15 +1663,19 @@ sub mergeProfiles($$$) {
 	my $id2			= shift;
 	my $desc		= shift;
 	my $merge_url_api;
+	my $id1_url = "";
+	my $id2_url = "";
 
 	if ($env{'G_profiles'}) {
 		$merge_url_api	= "https://www.geni.com/api/profile-G$id1/merge/profile-G$id2";
+		$id1_url = "<a href=\"http://www.geni.com/people/id/$id1\">$id1</a>";
+		$id2_url = "<a href=\"http://www.geni.com/people/id/$id2\">$id2</a>";
 	} else {
 		$merge_url_api	= "https://www.geni.com/api/profile-$id1/merge/profile-$id2";
+		$id1_url = "<a href=\"http://www.geni.com/profile-$id1\">$id1</a>";
+		$id2_url = "<a href=\"http://www.geni.com/profile-$id2\">$id2</a>";
 	}
 
-	my $id1_url = "<a href=\"http://www.geni.com/people/id/$id1\">$id1</a>";
-	my $id2_url = "<a href=\"http://www.geni.com/people/id/$id2\">$id2</a>";
 
 	geniLogin() if !$env{'logged_in'};
 	sleepIfNeeded();
@@ -2028,13 +2069,25 @@ sub stackProfiles($$) {
 	my $IDs_to_stack	= shift;
 
 	geniLogin() if !$env{'logged_in'};
-	my $primary_url = "<a href=\"http://www.geni.com/people/id/$primary_id\">$primary_id</a>";
+	my $primary_url = "";
+	if ($env{'G_profiles'}) {
+		$primary_url = "<a href=\"http://www.geni.com/people/id/$primary_id\">$primary_id</a>";
+	} else {
+		$primary_url = "<a href=\"http://www.geni.com/profile-$primary_id\">$primary_id</a>";
+	}
 	$IDs_to_stack =~ s/ //g;
 	foreach my $id (split(/,/, $IDs_to_stack)) {
 		if ($id !~ /^\d+$/) {
 			printDebug($DBG_PROGRESS, "ERROR: '$id' is not a valid profile ID\n");
 		}
-		my $id_url = "<a href=\"http://www.geni.com/people/id/$id\">$id</a>";
+
+		my $id_url = "";
+		if ($env{'G_profiles'}) {
+			$id_url = "<a href=\"http://www.geni.com/people/id/$id\">$id</a>";
+		} else {
+			$id_url = "<a href=\"http://www.geni.com/profile-$id\">$id</a>";
+		}
+
 		printDebug($DBG_PROGRESS, "\nStacking Primary $primary_id: Stacking Secondary $id");
 		printDebug($DBG_NONE, "\nStacking Primary $primary_url: Stacking Secondary $id_url\n");
 		mergeProfiles($primary_id, $id, "STACKING_MERGE");
