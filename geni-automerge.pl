@@ -54,7 +54,6 @@ sub init(){
 	$env{'loop'}			= 0;
 	$env{'direction'}		= "asc"; # Must be asc or desc
 	$env{'delete_files'}		= 1;
-	$env{'G_profiles'}		= 0;
 
 	$debug{"file_" . $DBG_NONE}		= 1;
 	$debug{"file_" . $DBG_PROGRESS}		= 1;
@@ -726,12 +725,7 @@ sub getMaleLastNames($) {
 
 	my $filename = "$env{'datadir'}/$profile_id\.json";
 
-	my $url;
-	if ($env{'G_profiles'}) {
-		$url = "https://www.geni.com/api/profile-G$profile_id/immediate-family?only_ids=true";
-	} else {
-		$url = "https://www.geni.com/api/profile-$profile_id/immediate-family?only_ids=true";
-	}
+	my $url = "https://www.geni.com/api/profile-$profile_id/immediate-family?only_ids=true";
 	my $json_profile = getJSON($filename, $url, $profile_id, 0);
 	return "" if (!$json_profile);
 
@@ -812,7 +806,8 @@ sub oddCharCount($) {
 	my $name = shift;
 	my $odd_char_count = 0;
 	foreach my $char (split(//, $name)) {
-		if ($char !~ /^\w$/) {
+		# DO NOTE USE \w here, it matches on hebrew characters
+		if ($char !~ /a-ZA-Z0-9/) {
 			$odd_char_count++;
 		}
 	}
@@ -858,16 +853,9 @@ sub recordMergeComplete($$$) {
 	my $id1			= shift;
 	my $id2			= shift;
 	my $desc		= shift;
-	my $id1_url = "";
-	my $id2_url = "";
 
-	if ($env{'G_profiles'}) {
-		$id1_url = "<a href=\"http://www.geni.com/people/id/$id1\">$id1</a>";
-		$id2_url = "<a href=\"http://www.geni.com/people/id/$id2\">$id2</a>";
-	} else {
-		$id1_url = "<a href=\"http://www.geni.com/profile-$id1\">$id1</a>";
-		$id2_url = "<a href=\"http://www.geni.com/profile-$id2\">$id2</a>";
-	}
+	my $id1_url = "<a href=\"http://www.geni.com/profile-$id1\">$id1</a>";
+	my $id2_url = "<a href=\"http://www.geni.com/profile-$id2\">$id2</a>";
 	(my $sec, my $min, my $hour, my $mday, my $mon, my $year, my $wday, my $yday, my $isdst) = localtime(time);
 
 	write_file($env{'merge_log_file'},
@@ -1380,22 +1368,13 @@ sub comparePartners($$$$) {
 	printDebug($DBG_MATCH_BASIC, "Left Profile $partner_type:\n");
 	foreach my $person (split(/::/, $left_partners)) {
 		(my $person_id, my $person_name, my $person_gender) = split(/:/, $person);
-		if ($env{'G_profiles'}) {
-			printDebug($DBG_MATCH_BASIC, "- <a href=\"http://www.geni.com/people/id/$person_id\">$person_name</a>\n");
-		} else {
-			printDebug($DBG_MATCH_BASIC, "- <a href=\"http://www.geni.com/profile-$person_id\">$person_name</a>\n");
-		}
+		printDebug($DBG_MATCH_BASIC, "- <a href=\"http://www.geni.com/profile-$person_id\">$person_name</a>\n");
 	}
 
 	printDebug($DBG_MATCH_BASIC, "Right Profile $partner_type:\n");
 	foreach my $person (split(/::/, $right_partners)) {
 		(my $person_id, my $person_name, my $person_gender) = split(/:/, $person);
-		
-		if ($env{'G_profiles'}) {
-			printDebug($DBG_MATCH_BASIC, "- <a href=\"http://www.geni.com/people/id/$person_id\">$person_name</a>\n");
-		} else {
-			printDebug($DBG_MATCH_BASIC, "- <a href=\"http://www.geni.com/profile-$person_id\">$person_name</a>\n");
-		}
+		printDebug($DBG_MATCH_BASIC, "- <a href=\"http://www.geni.com/profile-$person_id\">$person_name</a>\n");
 	}
 
 	return 0;
@@ -1417,9 +1396,6 @@ sub mergeURLHTML($$) {
 	my $id2			= shift;
 	
  	# http://www.geni.com/profile-101/compare/profile-102
-	if ($env{'G_profiles'}) {
-		return "<a href=\"http://www.geni.com/merge/compare/$id1?to=$id2\">$id1 vs. $id2</a>";
-	}
 	return "<a href=\"http://www.geni.com/profile-$id1/compare/profile-$id2\">$id1 vs. $id2</a>";
 }
 
@@ -1488,27 +1464,14 @@ sub getJSON($$$$) {
 sub compareProfiles($$) {
 	my $id1			= shift;
 	my $id2			= shift;
-	my $id1_url = "";
-	my $id2_url = "";
-
-	if ($env{'G_profiles'}) {
-		$id1_url = "<a href=\"http://www.geni.com/people/id/$id1\">$id1</a>";
-		$id2_url = "<a href=\"http://www.geni.com/people/id/$id2\">$id2</a>";
-	} else {
-		$id1_url = "<a href=\"http://www.geni.com/profile-$id1\">$id1</a>";
-		$id2_url = "<a href=\"http://www.geni.com/profile-$id2\">$id2</a>";
-	}
+	my $id1_url = "<a href=\"http://www.geni.com/profile-$id1\">$id1</a>";
+	my $id2_url = "<a href=\"http://www.geni.com/profile-$id2\">$id2</a>";
 
 	if (!$id1 || !$id2) {
 		printDebug($DBG_PROGRESS, "ERROR: compareProfiles was given an invalid id1 '$id1' or id2 '$id2'\n");
 		return 0;
 	}
-	my $profiles_url;
-	if ($env{'G_profiles'}) {
-		$profiles_url = "https://www.geni.com/api/profile-G$id1/compare/profile-G$id2?only_ids=true";
-	} else {
-		$profiles_url = "https://www.geni.com/api/profile-$id1/compare/profile-$id2?only_ids=true";
-	}
+	my $profiles_url = "https://www.geni.com/api/profile-$id1/compare/profile-$id2?only_ids=true";
 	my $filename = sprintf("$env{'datadir'}/%s-%s.json", $id1, $id2);
 	my $json_text = getJSON($filename, $profiles_url, $id1, $id2);
 	if (!$json_text) {
@@ -1577,17 +1540,10 @@ sub compareProfiles($$) {
 		# Do not merge a profile managed by any of the blacklist_managers
 		foreach my $profile_id (@managers) {
 			if ($blacklist_managers{$profile_id}) {
-				if ($env{'G_profiles'}) {
-					printDebug($DBG_NONE,
-						sprintf("NO_MATCH: %s is managed by blacklist user %s\n",
-							($geni_profile == $left_profile) ? $id1_url : $id2_url,
-							"<a href=\"http://www.geni.com/people/id/$profile_id/\">$profile_id</a>\n"));
-				} else {
-					printDebug($DBG_NONE,
-						sprintf("NO_MATCH: %s is managed by blacklist user %s\n",
-							($geni_profile == $left_profile) ? $id1_url : $id2_url,
-							"<a href=\"http://www.geni.com/profile-$profile_id/\">$profile_id</a>\n"));
-				}
+				printDebug($DBG_NONE,
+					sprintf("NO_MATCH: %s is managed by blacklist user %s\n",
+						($geni_profile == $left_profile) ? $id1_url : $id2_url,
+						"<a href=\"http://www.geni.com/profile-$profile_id/\">$profile_id</a>\n"));
 				unlink $filename if $env{'delete_files'};
 				return 0;
 			}
@@ -1662,20 +1618,9 @@ sub mergeProfiles($$$) {
 	my $id1			= shift;
 	my $id2			= shift;
 	my $desc		= shift;
-	my $merge_url_api;
-	my $id1_url = "";
-	my $id2_url = "";
-
-	if ($env{'G_profiles'}) {
-		$merge_url_api	= "https://www.geni.com/api/profile-G$id1/merge/profile-G$id2";
-		$id1_url = "<a href=\"http://www.geni.com/people/id/$id1\">$id1</a>";
-		$id2_url = "<a href=\"http://www.geni.com/people/id/$id2\">$id2</a>";
-	} else {
-		$merge_url_api	= "https://www.geni.com/api/profile-$id1/merge/profile-$id2";
-		$id1_url = "<a href=\"http://www.geni.com/profile-$id1\">$id1</a>";
-		$id2_url = "<a href=\"http://www.geni.com/profile-$id2\">$id2</a>";
-	}
-
+	my $merge_url_api	= "https://www.geni.com/api/profile-$id1/merge/profile-$id2";
+	my $id1_url = "<a href=\"http://www.geni.com/profile-$id1\">$id1</a>";
+	my $id2_url = "<a href=\"http://www.geni.com/profile-$id2\">$id2</a>";
 
 	geniLogin() if !$env{'logged_in'};
 	sleepIfNeeded();
@@ -1709,11 +1654,13 @@ sub mergeProfiles($$$) {
 				}
 
 			} else {
+				printDebug($DBG_PROGRESS, sprintf("\nMERGE_RESULT: %s\n", $result->decoded_content));
 				recordMergeRequest($id1, $id2);
 			}
 
 		# The merge was ok
 		} else {
+			printDebug($DBG_PROGRESS, sprintf("\nMERGE_RESULT: %s\n", $result->decoded_content));
 			recordMergeComplete($id1, $id2, $desc);
 		}
 	} else {
@@ -1777,11 +1724,7 @@ sub checkPublic($) {
 	geniLogin() if !$env{'logged_in'};
 	sleepIfNeeded();
 	my $result = new HTTP::Response;
-	if ($env{'G_profiles'}) {
-		$result = $m->post("https://www.geni.com/api/profile-G$profile_id/check-public");
-	} else {
-		$result = $m->post("https://www.geni.com/api/profile-$profile_id/check-public");
-	}
+	$result = $m->post("https://www.geni.com/api/profile-$profile_id/check-public");
 	updateGetHistory("checkPublic");
 
 	my $profile_is_public = ($result->is_success && $result->decoded_content =~ /true/);
@@ -1811,12 +1754,7 @@ sub analyzeTreeConflict($$) {
 
 	my @fathers, my @mothers, my @spouses, my @sons, my @daughters, my @brothers, my @sisters;
 	my $filename = "$env{'datadir'}/$profile_id\.json";
-	my $url;
-	if ($env{'G_profiles'}) {
-		$url = "https://www.geni.com/api/profile-G$profile_id/immediate-family?only_ids=true";
-	} else {
-		$url = "https://www.geni.com/api/profile-$profile_id/immediate-family?only_ids=true";
-	}
+	my $url = "https://www.geni.com/api/profile-$profile_id/immediate-family?only_ids=true";
 	my $json_profile = getJSON($filename, $url, $profile_id, 0);
 	if (!$json_profile) {
 		return 0;
@@ -1976,12 +1914,7 @@ sub analyzeTreeConflictRecursive($) {
 
 	my @fathers, my @mothers, my @spouses, my @sons, my @daughters, my @brothers, my @sisters;
 	my $filename = "$env{'datadir'}/$profile_id\.json";
-	my $url;
-	if ($env{'G_profiles'}) {
-		$url = "https://www.geni.com/api/profile-G$profile_id/immediate-family?only_ids=true";
-	} else {
-		$url = "https://www.geni.com/api/profile-$profile_id/immediate-family?only_ids=true";
-	}
+	my $url = "https://www.geni.com/api/profile-$profile_id/immediate-family?only_ids=true";
 	my $json_profile = getJSON($filename, $url, $profile_id, 0);
 	if (!$json_profile) {
 		return 0;
@@ -2069,24 +2002,14 @@ sub stackProfiles($$) {
 	my $IDs_to_stack	= shift;
 
 	geniLogin() if !$env{'logged_in'};
-	my $primary_url = "";
-	if ($env{'G_profiles'}) {
-		$primary_url = "<a href=\"http://www.geni.com/people/id/$primary_id\">$primary_id</a>";
-	} else {
-		$primary_url = "<a href=\"http://www.geni.com/profile-$primary_id\">$primary_id</a>";
-	}
+	my $primary_url = "<a href=\"http://www.geni.com/profile-$primary_id\">$primary_id</a>";
 	$IDs_to_stack =~ s/ //g;
 	foreach my $id (split(/,/, $IDs_to_stack)) {
 		if ($id !~ /^\d+$/) {
 			printDebug($DBG_PROGRESS, "ERROR: '$id' is not a valid profile ID\n");
 		}
 
-		my $id_url = "";
-		if ($env{'G_profiles'}) {
-			$id_url = "<a href=\"http://www.geni.com/people/id/$id\">$id</a>";
-		} else {
-			$id_url = "<a href=\"http://www.geni.com/profile-$id\">$id</a>";
-		}
+		my $id_url = "<a href=\"http://www.geni.com/profile-$id\">$id</a>";
 
 		printDebug($DBG_PROGRESS, "\nStacking Primary $primary_id: Stacking Secondary $id");
 		printDebug($DBG_NONE, "\nStacking Primary $primary_url: Stacking Secondary $id_url\n");
@@ -2272,6 +2195,22 @@ sub validateProfileID($) {
 		print STDERR "\nERROR: You must specify a profile ID, you entered '$profile_id'\n";
 		exit();
 	}
+}
+
+# Geni changed ID systems, use this to convert from old to new
+sub convertGUIDToNodeID($) {
+	my $guid = shift;
+
+	my $filename = "$env{'datadir'}/$guid\.json";
+	my $url = "https://www.geni.com/api/profile-G$guid";
+	my $json_profile = getJSON($filename, $url, $guid, 0);
+	return "" if (!$json_profile);
+
+	if ($json_profile->{'id'} =~ /profile-(\d+)$/) {
+		return $1;
+	}
+
+	return "";
 }
 
 sub main() {
@@ -2472,9 +2411,10 @@ sub main() {
 			print STDERR "\nERROR: You must specify two profile IDs, you only specified one\n";
 			exit();
 		}
+		$left_id = convertGUIDToNodeID($left_id);
+		$right_id = convertGUIDToNodeID($right_id);
 		validateProfileID($left_id);
 		validateProfileID($right_id);
-		$env{'G_profiles'} = 1;
 		analyzePendingMerge($left_id, $right_id);
 
 	} elsif ($env{'action'} eq "tree_conflicts") {
@@ -2484,13 +2424,13 @@ sub main() {
 		} while ($env{'loop'});
 
 	} elsif ($env{'action'} eq "tree_conflicts_recursive") {
-		$env{'G_profiles'} = 1;
+		$left_id = convertGUIDToNodeID($left_id);
 		validateProfileID($left_id);
 		analyzeTreeConflictRecursive($left_id);
 
 	} elsif ($env{'action'} eq "tree_conflict") {
+		$left_id = convertGUIDToNodeID($left_id);
 		validateProfileID($left_id);
-		$env{'G_profiles'} = 1;
 		analyzeTreeConflict($left_id, "parent");
 		analyzeTreeConflict($left_id, "siblings");
 		analyzeTreeConflict($left_id, "partner");
@@ -2511,9 +2451,11 @@ sub main() {
 		analyzeTreeMatch($left_id);
 
 	} elsif ($env{'action'} eq "stack") {
+		$left_id = convertGUIDToNodeID($left_id);
+		$right_id = convertGUIDToNodeID($right_id);
 		validateProfileID($left_id);
+		validateProfileID($right_id);
 		stackProfiles($left_id, $right_id);
-		$env{'G_profiles'} = 1;
 
 	} elsif ($env{'action'} eq "data_conflicts") {
 		do {
@@ -2526,9 +2468,11 @@ sub main() {
 		analyzeDataConflict($left_id);
 
 	} elsif ($env{'action'} eq "focal") {
+		$left_id = convertGUIDToNodeID($left_id);
+		$right_id = convertGUIDToNodeID($right_id);
 		validateProfileID($left_id);
+		validateProfileID($right_id);
 		stackProfiles($left_id, $right_id);
-		$env{'G_profiles'} = 1;
 		analyzeTreeConflict($left_id, "parent");
 		analyzeTreeConflict($left_id, "siblings");
 		analyzeTreeConflict($left_id, "partner");
