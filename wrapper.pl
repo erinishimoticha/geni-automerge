@@ -36,7 +36,7 @@ die("ERROR: you must specify a re value via '-re X'\n\n") if ($re !~ /^\d+$/);
 
 for (my $i = $re; $i >= $rb; $i--) {
 	if ($mode eq "-tcs") {
-		if (-e "script_data/tree_conflicts_$i\.json") {
+		if (-e "script_data/tree-conflicts_$i\.json") {
 			$re = $i;
 		}
 	} elsif ($mode eq "-pms") {
