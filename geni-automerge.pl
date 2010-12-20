@@ -1789,6 +1789,11 @@ sub analyzeTreeConflict($$) {
 	}
 
 	jsonToFamilyArrays($json_profile, $profile_id, \@fathers, \@mothers, \@spouses, \@sons, \@daughters, \@brothers, \@sisters);
+	my $ugly_count = 0;
+	$ugly_count += $#fathers + 1 if ($#fathers >= 0); 
+	$ugly_count += $#mothers + 1 if ($#mothers >= 0); 
+	$ugly_count += $#spouses + 1 if ($#spouses >= 0); 
+	write_file($env{'ugly_file'}, "$ugly_count <a href=\"http://www.geni.com/profile-$profile_id\">$profile_id</a>\n", 1);
 
 	my $profile_count = 0;
 	my $match_count = 0;
@@ -2377,6 +2382,7 @@ sub main() {
 	$env{'logdir'}			= "logs";
 	$env{'merge_log_file'}		= "merge_log.html";
 	$env{'merge_fail_file'}		= "merge_fail.html";
+	$env{'ugly_file'}		= "ugly_profiles.html";
 	$env{'cache_merge_request'}	= "cache_merge_request.txt";
 	$env{'cache_merge_fail'}	= "cache_merge_fail.txt";
 	$env{'cache_no_match'}		= "cache_no_match.txt";
@@ -2392,6 +2398,7 @@ sub main() {
 		$env{'logdir'}			= "$env{'user_home_dir'}/logs";
 		$env{'merge_log_file'}		= "$env{'home_dir'}/merge_log.html";
 		$env{'merge_fail_file'}		= "$env{'home_dir'}/merge_fail.html";
+		$env{'ugly_file'}		= "$env{'home_dir'}/ugly_profiles.html";
 		$env{'cache_merge_request'}	= "$env{'home_dir'}/cache_merge_request.txt";
 		$env{'cache_merge_fail'}	= "$env{'home_dir'}/cache_merge_fail.txt";
 		$env{'cache_no_match'}		= "$env{'home_dir'}/cache_no_match.txt";
@@ -2411,6 +2418,7 @@ sub main() {
 	write_file($env{'log_file'}, "<html><head><meta http-equiv=\"refresh\" content=\"60\"></head><pre>\n", 0);
 	write_file($env{'merge_log_file'}, "<pre>", 0) if !(-e $env{'merge_log_file'});
 	write_file($env{'merge_fail_file'}, "<html><head><title>geni-automerge Failed Merges</title></head><pre>", 0) if !(-e $env{'merge_fail_file'});
+	write_file($env{'ugly_file'}, "<pre>\n", 0) if !(-e $env{'ugly_file'});
 	loadCache();
 
 	if ($env{'password'} eq "") {
