@@ -1621,6 +1621,7 @@ sub mergeProfiles($$$) {
 	my $merge_url_api	= "https://www.geni.com/api/profile-$id1/merge/profile-$id2";
 	my $id1_url = "<a href=\"http://www.geni.com/profile-$id1\">$id1</a>";
 	my $id2_url = "<a href=\"http://www.geni.com/profile-$id2\">$id2</a>";
+	my $winner = 0;
 
 	geniLogin() if !$env{'logged_in'};
 	sleepIfNeeded();
@@ -1654,18 +1655,27 @@ sub mergeProfiles($$$) {
 				}
 
 			} else {
-				printDebug($DBG_PROGRESS, sprintf("\nMERGE_RESULT: %s\n", $result->decoded_content));
+				# printDebug($DBG_PROGRESS, sprintf("\nMERGE_RESULT: %s\n", $result->decoded_content));
+				# {"result":"profile-40714040 merged into profile-32150908 with conflicts"}
+				if ($result->decoded_content =~ /profile-\d+ merged into profile-(\d+)/) {
+					$winner = $1;
+				}
 				recordMergeRequest($id1, $id2);
 			}
 
 		# The merge was ok
 		} else {
-			printDebug($DBG_PROGRESS, sprintf("\nMERGE_RESULT: %s\n", $result->decoded_content));
+			# printDebug($DBG_PROGRESS, sprintf("\nMERGE_RESULT: %s\n", $result->decoded_content));
 			recordMergeComplete($id1, $id2, $desc);
+			if ($result->decoded_content =~ /profile-\d+ merged into profile-(\d+)/) {
+				$winner = $1;
+			}
 		}
 	} else {
 		recordMergeFailure($id1, $id2, $result->decoded_content);
 	}
+
+	return ($winner);
 }
 
 sub compareAllProfiles($$) {
@@ -1689,8 +1699,13 @@ sub compareAllProfiles($$) {
 			if (compareNames($gender, $i_name, $i_id, $j_name, $j_id, 0)) {
 				if (compareProfiles($i_id, $j_id)) {
 					printDebug($DBG_PROGRESS, ": MATCH\n");
-					mergeProfiles($i_id, $j_id, "TREE_CONFLICT");
+					my $winner = mergeProfiles($i_id, $j_id, "TREE_CONFLICT");
 					$match_count++;
+					if (($winner == $j_id) && ($j < $#profiles_array)) {
+						printDebug($DBG_PROGRESS, sprintf("%s\[%s] was the winner of the merge so skipping %s\[%s] vs. %s[%s] -> %s[%s]\n",
+										$text, $j, $text, $i, $text, $j + 1, $text, $#profiles_array));
+						last;
+					}
 				} else {
 					printDebug($DBG_PROGRESS, ": NO_MATCH\n");
 					recordNonMatch($i_id, $j_id);
@@ -1701,7 +1716,6 @@ sub compareAllProfiles($$) {
 			$profile_count++;
 		}
 	}
-
 	return ($profile_count, $match_count);
 }
 
