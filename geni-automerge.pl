@@ -1651,6 +1651,7 @@ sub mergeProfiles($$$) {
 						recordMergeComplete($id1, $id2, $desc);
 					}
 				} else {
+					printDebug($DBG_PROGRESS, sprintf("\nMERGE_FAILURE_REASON: %s\n", $result->decoded_content));
 					recordMergeFailure($id1, $id2, $result->decoded_content);
 				}
 
@@ -1686,12 +1687,21 @@ sub compareAllProfiles($$) {
 	my $match_count = 0;
 
 	for (my $i = 0; $i <= $#profiles_array; $i++) {
-		#printDebug($DBG_NONE, "OUTSIDE LOOP: $i => $profiles_array[$i]\n");
+		if ($profiles_array[$i] eq "SKIP_THIS_ONE") {
+			print "TREE_CONFLICT_COMPARE: $text\[$i] has already been merged into another profile....skipping\n";
+			next;
+		}
+
 		(my $i_id, my $i_name, my $gender) = split(/:/, $profiles_array[$i]);
 
 		for (my $j = $i + 1; $j <= $#profiles_array; $j++) {
-			#printDebug($DBG_NONE, "INSIDE LOOP: $j => $profiles_array[$j]\n");
+			if ($profiles_array[$j] eq "SKIP_THIS_ONE") {
+				print "TREE_CONFLICT_COMPARE: $text\[$j] has already been merged into another profile....skipping\n";
+				next;
+			}
+
 			(my $j_id, my $j_name, my $gender) = split(/:/, $profiles_array[$j]);
+
 			printDebug($DBG_PROGRESS, "TREE_CONFLICT_COMPARE: $text\[$i] $i_name vs. $text\[$j] $j_name");
 			next if (nameCompareResultCached($i_id, $j_id) eq "NOT_A_MATCH");
 			next if (compareResultCached($i_id, $j_id));
@@ -1701,10 +1711,14 @@ sub compareAllProfiles($$) {
 					printDebug($DBG_PROGRESS, ": MATCH\n");
 					my $winner = mergeProfiles($i_id, $j_id, "TREE_CONFLICT");
 					$match_count++;
-					if (($winner == $j_id) && ($j < $#profiles_array)) {
-						printDebug($DBG_PROGRESS, sprintf("%s\[%s] was the winner of the merge so skipping %s\[%s] vs. %s[%s] -> %s[%s]\n",
-										$text, $j, $text, $i, $text, $j + 1, $text, $#profiles_array));
-						last;
+					if ($winner == $j_id) {
+						if ($j < $#profiles_array) {
+							printDebug($DBG_PROGRESS, sprintf("%s\[%s] was the winner of the merge so skipping %s\[%s] vs. %s[%s] -> %s[%s]\n",
+											$text, $j, $text, $i, $text, $j + 1, $text, $#profiles_array));
+							last;
+						}
+					} elsif ($winner == $i_id) {
+						$profiles_array[$j] = "SKIP_THIS_ONE";
 					}
 				} else {
 					printDebug($DBG_PROGRESS, ": NO_MATCH\n");
