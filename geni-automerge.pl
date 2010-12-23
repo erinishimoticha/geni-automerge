@@ -1113,9 +1113,13 @@ sub updateLastMaidenNames($$$) {
 	my $maiden_name	= shift;
 	my $profile_id	= shift;
 
-	(my $father_last_name, my $husband_last_name) = getMaleLastNames($profile_id);
+	# If the profile is private we won't be able to get any additional information
+	if (cacheExists("cache_private_profiles", "$profile_id")) {
+		return ($last_name, $maiden_name);
+	}
 
-	# If the the profile was private then we couldn't get enough info so just return the names we already have
+	# If the we couldn't get enough info just return the names we already have
+	(my $father_last_name, my $husband_last_name) = getMaleLastNames($profile_id);
 	if ($father_last_name eq "" && $husband_last_name eq "") {
 		return ($last_name, $maiden_name);
 	}
@@ -2046,19 +2050,19 @@ sub rangeBeginEnd($$$$) {
 		$range_end = $max_page;
 	}
 
-	for (my $i = $range_end; $i >= $range_begin; $i--) {
-		$range_end = $i if (-e "$env{'datadir'}/$api_action\_$i.json");
-	}
-
 	if (!$range_begin) {
 		$range_begin = 1;
+	}
+
+	for (my $i = $range_begin; $i <= $range_end; $i++) {
+		$range_begin = $i if (-e "$env{'datadir'}/$api_action\_$i.json");
 	}
 
 	if ($range_begin > $range_end) {
 		printDebug($DBG_PROGRESS, "ERROR: -rb $range_begin is greater than -re '$range_end'\n");
 		exit();
 	}
-	printDebug($DBG_PROGRESS, "Page Range $range_end -> $range_begin\n");
+	printDebug($DBG_PROGRESS, "Page Range $range_begin -> $range_end\n");
 
 	return ($range_begin, $range_end);
 }
@@ -2112,8 +2116,8 @@ sub traverseJSONPages($$$$) {
 	}
 
 	($range_begin, $range_end) = rangeBeginEnd($range_begin, $range_end, $type, $api_action);
-	my $filename = "$env{'datadir'}/$api_action\_$range_end\.json";
-	my $url = apiURL($api_action, $range_end, $focus_id);
+	my $filename = "$env{'datadir'}/$api_action\_$range_begin\.json";
+	my $url = apiURL($api_action, $range_begin, $focus_id);
 	my $json_page = getJSON($filename, $url, 0, 0);
 	if (!$json_page) {
 		return 0;
@@ -2123,8 +2127,8 @@ sub traverseJSONPages($$$$) {
 	while ($url ne "") {
 		$url =~ /page=(\d+)/;
 		my $page = $1;
-		if ($page - 1 >= $range_begin) {
-			$next_url = apiURL($api_action, $page - 1, $focus_id);
+		if ($page + 1 <= $range_end) {
+			$next_url = apiURL($api_action, $page + 1, $focus_id);
 		} else {
 			$next_url = "";
 		}
