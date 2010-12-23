@@ -89,6 +89,7 @@ sub init(){
 		death_date		=> '$',
 		death_location		=> '$',
 		id			=> '$',
+		public			=> '$',
 		fathers			=> '$',
 		mothers			=> '$',
 		spouses			=> '$'
@@ -727,7 +728,7 @@ sub getMaleLastNames($) {
 
 	my $url = "https://www.geni.com/api/profile-$profile_id/immediate-family?only_ids=true";
 	my $json_profile = getJSON($filename, $url, $profile_id, 0);
-	return "" if (!$json_profile);
+	return ("","") if (!$json_profile);
 
 	my @fathers, my @mothers, my @spouses, my @sons, my @daughters, my @brothers, my @sisters;
 	jsonToFamilyArrays($json_profile, $profile_id, \@fathers, \@mothers, \@spouses, \@sons, \@daughters, \@brothers, \@sisters);
@@ -1112,12 +1113,12 @@ sub updateLastMaidenNames($$$) {
 	my $maiden_name	= shift;
 	my $profile_id	= shift;
 
-	# If the profile is private we can't get to the data we need to do this so go ahead and return
-	if (!checkPublic($profile_id)) {
+	(my $father_last_name, my $husband_last_name) = getMaleLastNames($profile_id);
+
+	# If the the profile was private then we couldn't get enough info so just return the names we already have
+	if ($father_last_name eq "" && $husband_last_name eq "") {
 		return ($last_name, $maiden_name);
 	}
-
-	(my $father_last_name, my $husband_last_name) = getMaleLastNames($profile_id);
 
 	if ($husband_last_name && $husband_last_name ne $last_name) {
 		if ($maiden_name eq "") {
@@ -1546,9 +1547,14 @@ sub compareProfiles($$) {
 		$geni_profile->death_year($json_profile->{'focus'}->{'death_year'});
 		$geni_profile->birth_date($json_profile->{'focus'}->{'birth_date'});
 		$geni_profile->birth_year($json_profile->{'focus'}->{'birth_year'});
+		$geni_profile->public($json_profile->{'focus'}->{'public'});
 		my $profile_id = $json_profile->{'focus'}->{'id'};
 		$profile_id =~ s/profile-//g;
 		$geni_profile->id($profile_id);
+
+		if ($geni_profile->public eq "false" && checkPublic($profile_id)) {
+			$geni_profile->public("true");
+		}
 		
 		my @fathers, my @mothers, my @spouses, my @sons, my @daughters, my @brothers, my @sisters;
 		jsonToFamilyArrays($json_profile, $profile_id, \@fathers, \@mothers, \@spouses, \@sons, \@daughters, \@brothers, \@sisters);
@@ -1619,36 +1625,14 @@ sub mergeProfiles($$$) {
 	if ($result->is_success) {
 		printDebug($DBG_PROGRESS, sprintf(": MERGING %s and %s\n", $id1, $id2));
 
-		# This happens if you try to merge two private profiles
+		# This happens if at least one of the profiles you tried to merge is private
 		if ($result->decoded_content =~ /merge requested/i) {
-			my $id1_public = checkPublic($id1);
-			my $id2_public = checkPublic($id2);
-
-			# Try to make both profiles public, if it works then do the merge again
-			if ($id1_public && $id2_public) {
-				sleepIfNeeded();
-				my $result = new HTTP::Response;
-				$result = $m->post($merge_url_api);
-				updateGetHistory("mergeProfiles");
-				if ($result->is_success) {
-					if ($result->decoded_content =~ /merge requested/i) {
-						recordMergeRequest($id1, $id2);
-					} else {
-						recordMergeComplete($id1, $id2, $desc);
-					}
-				} else {
-					printDebug($DBG_PROGRESS, sprintf("\nMERGE_FAILURE_REASON: %s\n", $result->decoded_content));
-					recordMergeFailure($id1, $id2, $result->decoded_content);
-				}
-
-			} else {
-				# printDebug($DBG_PROGRESS, sprintf("\nMERGE_RESULT: %s\n", $result->decoded_content));
-				# {"result":"profile-40714040 merged into profile-32150908 with conflicts"}
-				if ($result->decoded_content =~ /profile-\d+ merged into profile-(\d+)/) {
-					$winner = $1;
-				}
-				recordMergeRequest($id1, $id2);
+			# printDebug($DBG_PROGRESS, sprintf("\nMERGE_RESULT: %s\n", $result->decoded_content));
+			# {"result":"profile-40714040 merged into profile-32150908 with conflicts"}
+			if ($result->decoded_content =~ /profile-\d+ merged into profile-(\d+)/) {
+				$winner = $1;
 			}
+			recordMergeRequest($id1, $id2);
 
 		# The merge was ok
 		} else {
@@ -1659,6 +1643,7 @@ sub mergeProfiles($$$) {
 			}
 		}
 	} else {
+		printDebug($DBG_PROGRESS, sprintf("\nMERGE_FAILURE_REASON: %s\n", $result->decoded_content));
 		recordMergeFailure($id1, $id2, $result->decoded_content);
 	}
 
@@ -1866,11 +1851,16 @@ sub jsonToFamilyArrays($$$$$$$$$) {
 			my $middle_name = $json_profile->{'nodes'}->{$j}->{'middle_name'};
 			my $last_name = $json_profile->{'nodes'}->{$j}->{'last_name'};
 			my $maiden_name = $json_profile->{'nodes'}->{$j}->{'maiden_name'};
+			my $public = $json_profile->{'nodes'}->{$j}->{'public'};
 			my $name = cleanupName($first_name, $middle_name, $last_name, $maiden_name);
 			my $push_string = "$id:$name:$gender";
 
 			# A "hidden_child" is just a placeholder profile and can be ignored
 			next if ($rel eq "hidden_child");
+
+			if ($public eq "false" && checkPublic($id)) {
+				$public = "true"
+			}
 
 			if ($id eq "") {
 				printDebug($DBG_PROGRESS, "ERROR: $i $j is missing from the json\n");
