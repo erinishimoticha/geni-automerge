@@ -18,7 +18,7 @@ binmode STDERR, ":utf8";
 
 # globals and constants
 my (%env, %debug, %blacklist_managers, @get_history, %new_tree_conflicts);
-my (%cache_public_profiles, %cache_private_profiles, %cache_merge_request, %cache_merge_fail, %cache_no_match, %cache_name_mismatch);
+my (%cache_private_profiles, %cache_merge_request, %cache_merge_fail, %cache_no_match, %cache_name_mismatch);
 my $m = WWW::Mechanize->new(autocheck => 0);
 my $DBG_NONE			= "DBG_NONE"; # Normal output
 my $DBG_PROGRESS		= "DBG_PROGRESS";
@@ -872,9 +872,7 @@ sub cacheWrite($$$$) {
 	my $key		= shift;
 	my $value	= shift;
 
-	if ($type eq "cache_public_profiles") {
-		$cache_public_profiles{$key} = $value;
-	} elsif ($type eq "cache_private_profiles") {
+	if ($type eq "cache_private_profiles") {
 		$cache_private_profiles{$key} = $value;
 	} elsif ($type eq "cache_merge_request") {
 		$cache_merge_request{$key} = $value;
@@ -895,9 +893,7 @@ sub cacheExists($$) {
 	my $type	= shift;
 	my $key		= shift;
 
-	if ($type eq "cache_public_profiles") {
-		return (exists $cache_public_profiles{$key});
-	} elsif ($type eq "cache_private_profiles") {
+	if ($type eq "cache_private_profiles") {
 		return (exists $cache_private_profiles{$key});
 	} elsif ($type eq "cache_merge_request") {
 		return (exists $cache_merge_request{$key});
@@ -917,9 +913,7 @@ sub cacheRead($$) {
 	my $type	= shift;
 	my $key		= shift;
 
-	if ($type eq "cache_public_profiles") {
-		return $cache_public_profiles{$key};
-	} elsif ($type eq "cache_private_profiles") {
+	if ($type eq "cache_private_profiles") {
 		return $cache_private_profiles{$key};
 	} elsif ($type eq "cache_merge_request") {
 		return $cache_merge_request{$key};
@@ -1019,7 +1013,6 @@ sub compareResultCached($$) {
 
 sub loadCache() {
 	undef %cache_private_profiles;
-	undef %cache_public_profiles;
 	undef %cache_merge_request;
 	undef %cache_merge_fail;
 	undef %cache_no_match;
@@ -1029,13 +1022,6 @@ sub loadCache() {
 	while (<FH>) {
 		chomp();
 		$cache_private_profiles{$_} = 1;
-	}
-	close FH;
-
-	open(FH, $env{'cache_public_profiles'});
-	while (<FH>) {
-		chomp();
-		$cache_public_profiles{$_} = 1;
 	}
 	close FH;
 
@@ -1739,11 +1725,6 @@ sub checkPublic($) {
 		return 0;
 	}
 
-	if (cacheExists("cache_public_profiles", "$profile_id")) {
-		printDebug($DBG_NONE, "\nPUBLIC_PROFILE (CACHED): $profile_id\n");
-		return 1;
-	}
-
 	if (cacheExists("cache_private_profiles", "$profile_id")) {
 		printDebug($DBG_NONE, "\nPRIVATE_PROFILE (CACHED): $profile_id\n");
 		return 0;
@@ -1760,7 +1741,6 @@ sub checkPublic($) {
 		# todo: if we ever get a hunt_zombies API this is the scenario where we should run it
 		printDebug($DBG_NONE,
 			"\nPRIVATE_PROFILE: $profile_id was converted from private to public\n");
-		cacheWrite("cache_public_profiles", "$profile_id", "$profile_id", 1);
 	} else {
 		printDebug($DBG_NONE,
 			"\nPRIVATE_PROFILE: $profile_id could not be converted from private to public\n");
@@ -2388,7 +2368,6 @@ sub main() {
 	$env{'cache_no_match'}		= "cache_no_match.txt";
 	$env{'cache_name_mismatch'}	= "cache_name_mismatch.txt";
 	$env{'cache_private_profiles'}	= "cache_private_profiles.txt";
-	$env{'cache_public_profiles'}	= "cache_public_profiles.txt";
 	$env{'log_file'}		= "$env{'logdir'}/logfile_" . dateHourMinuteSecond() . ".html";
 
 	if ($run_from_cgi) {
@@ -2404,7 +2383,6 @@ sub main() {
 		$env{'cache_no_match'}		= "$env{'home_dir'}/cache_no_match.txt";
 		$env{'cache_name_mismatch'}	= "$env{'home_dir'}/cache_name_mismatch.txt";
 		$env{'cache_private_profiles'}	= "$env{'home_dir'}/cache_private_profiles.txt";
-		$env{'cache_public_profiles'}	= "$env{'home_dir'}/cache_public_profiles.txt";
 		system "rm -rf $env{'datadir'}/*";
 		system "rm -rf $env{'logdir'}/*";
 		(mkdir $env{'home_dir'}, 0755) if !(-e $env{'home_dir'});
