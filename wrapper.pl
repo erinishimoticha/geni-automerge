@@ -34,20 +34,20 @@ die("ERROR: you must specify an api value via '-api X'\n\n") if ($api !~ /^\d+$/
 die("ERROR: you must specify a rb value via '-rb X'\n\n") if ($rb !~ /^\d+$/);
 die("ERROR: you must specify a re value via '-re X'\n\n") if ($re !~ /^\d+$/);
 
-for (my $i = $re; $i >= $rb; $i--) {
+for (my $i = $rb; $i <= $re; $i++) {
 	if ($mode eq "-tcs") {
 		if (-e "script_data/tree-conflicts_$i\.json") {
-			$re = $i;
+			$rb = $i;
 		}
 	} elsif ($mode eq "-pms") {
 		if (-e "script_data/merges_$i\.json") {
-			$re = $i;
+			$rb = $i;
 		}
 	}
 }
 
-print "$re -> $rb\n";
-for (my $i = $re; $i >= $rb; $i--) {
+print "$rb -> $re\n";
+for (my $i = $rb; $i <= $re; $i++) {
 	print "./geni-automerge.pl $mode -all -mlt -api $api -rb $i -re $i\n";
 	system "./geni-automerge.pl $mode -all -mlt -api $api -rb $i -re $i";
 }
