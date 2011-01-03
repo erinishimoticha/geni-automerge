@@ -1700,7 +1700,7 @@ sub compareAllProfiles($$) {
 					recordNonMatch($i_id, $j_id);
 				}
 			} else {
-				printDebug($DBG_PROGRESS, ": NAME MISMATCH\n");
+				printDebug($DBG_MATCH_BASIC, ": NAME MISMATCH\n");
 			}
 			$profile_count++;
 		}
