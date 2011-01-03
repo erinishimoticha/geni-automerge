@@ -1677,7 +1677,7 @@ sub compareAllProfiles($$) {
 
 			(my $j_id, my $j_name, my $gender) = split(/:/, $profiles_array[$j]);
 
-			printDebug($DBG_PROGRESS, "TREE_CONFLICT_COMPARE: $text\[$i] $i_name vs. $text\[$j] $j_name");
+			printDebug($DBG_NAMES, "TREE_CONFLICT_COMPARE: $text\[$i] $i_name vs. $text\[$j] $j_name\n");
 			next if (nameCompareResultCached($i_id, $j_id) eq "NOT_A_MATCH");
 			next if (compareResultCached($i_id, $j_id));
 
