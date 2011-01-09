@@ -55,14 +55,14 @@ sub init(){
 	$env{'direction'}		= "asc"; # Must be asc or desc
 	$env{'delete_files'}		= 1;
 
-	$debug{"file_" . $DBG_NONE}		= 1;
-	$debug{"file_" . $DBG_PROGRESS}		= 1;
+	$debug{"file_" . $DBG_NONE}		= 0;
+	$debug{"file_" . $DBG_PROGRESS}		= 0;
 	$debug{"file_" . $DBG_IO}		= 0;
-	$debug{"file_" . $DBG_URLS}		= 1;
+	$debug{"file_" . $DBG_URLS}		= 0;
 	$debug{"file_" . $DBG_NAMES}		= 0;
 	$debug{"file_" . $DBG_JSON}		= 0;
-	$debug{"file_" . $DBG_MATCH_BASIC}	= 1;
-	$debug{"file_" . $DBG_MATCH_DATE}	= 1;
+	$debug{"file_" . $DBG_MATCH_BASIC}	= 0;
+	$debug{"file_" . $DBG_MATCH_DATE}	= 0;
 	$debug{"file_" . $DBG_TIME}		= 0;
 	$debug{"console_" . $DBG_NONE}		= 0;
 	$debug{"console_" . $DBG_PROGRESS}	= 1;
@@ -971,18 +971,18 @@ sub nameCompareResultCached($$) {
 
 	if (cacheExists("cache_name_mismatch", "$id1:$id2")) {
 		if (cacheRead("cache_name_mismatch", "$id1:$id2") eq "NOT_A_MATCH") {
-			printDebug($DBG_PROGRESS, ": (CACHED) NAME MISMATCH\n");
+			printDebug($DBG_MATCH_BASIC, ": (CACHED) NAME MISMATCH\n");
 		} else {
-			printDebug($DBG_PROGRESS, ": (CACHED) NAME MATCH\n");
+			printDebug($DBG_MATCH_BASIC, ": (CACHED) NAME MATCH\n");
 		}
 		return $cache_name_mismatch{"$id1:$id2"};
 	}
 
 	if (cacheExists("cache_name_mismatch", "$id2:$id1")) {
 		if (cacheRead("cache_name_mismatch", "$id2:$id1") eq "NOT_A_MATCH") {
-			printDebug($DBG_PROGRESS, ": (CACHED) NAME MISMATCH\n");
+			printDebug($DBG_MATCH_BASIC, ": (CACHED) NAME MISMATCH\n");
 		} else {
-			printDebug($DBG_PROGRESS, ": (CACHED) NAME MATCH\n");
+			printDebug($DBG_MATCH_BASIC, ": (CACHED) NAME MATCH\n");
 		}
 		return $cache_name_mismatch{"$id2:$id1"};
 	}
@@ -995,7 +995,7 @@ sub compareResultCached($$) {
 	my $id2	= shift;
 
 	if (cacheExists("cache_no_match", "$id1:$id2") || cacheExists("cache_no_match", "$id2:$id1")) {
-		printDebug($DBG_PROGRESS, ": (CACHED) NOT A MATCH\n");
+		printDebug($DBG_MATCH_BASIC, ": (CACHED) NOT A MATCH\n");
 		return 1;
 	}
 
@@ -1679,7 +1679,7 @@ sub compareAllProfiles($$) {
 
 			(my $j_id, my $j_name, my $gender) = split(/:/, $profiles_array[$j]);
 
-			printDebug($DBG_PROGRESS, "TREE_CONFLICT_COMPARE: $text\[$i] $i_name vs. $text\[$j] $j_name");
+			printDebug($DBG_NAMES, "TREE_CONFLICT_COMPARE: $text\[$i] $i_name vs. $text\[$j] $j_name\n");
 			next if (nameCompareResultCached($i_id, $j_id) eq "NOT_A_MATCH");
 			next if (compareResultCached($i_id, $j_id));
 
@@ -1702,7 +1702,7 @@ sub compareAllProfiles($$) {
 					recordNonMatch($i_id, $j_id);
 				}
 			} else {
-				printDebug($DBG_PROGRESS, ": NAME MISMATCH\n");
+				printDebug($DBG_MATCH_BASIC, ": NAME MISMATCH\n");
 			}
 		}
 	}
