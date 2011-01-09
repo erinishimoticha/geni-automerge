@@ -38,10 +38,14 @@ for (my $i = $rb; $i <= $re; $i++) {
 	if ($mode eq "-tcs") {
 		if (-e "script_data/tree-conflicts_$i\.json") {
 			$rb = $i;
+		} else {
+			last;
 		}
 	} elsif ($mode eq "-pms") {
 		if (-e "script_data/merges_$i\.json") {
 			$rb = $i;
+		} else {
+			last;
 		}
 	}
 }
