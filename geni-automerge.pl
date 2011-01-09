@@ -1670,6 +1670,8 @@ sub compareAllProfiles($$) {
 		(my $i_id, my $i_name, my $gender) = split(/:/, $profiles_array[$i]);
 
 		for (my $j = $i + 1; $j <= $#profiles_array; $j++) {
+			$profile_count++;
+
 			if ($profiles_array[$j] eq "SKIP_THIS_ONE") {
 				print "TREE_CONFLICT_COMPARE: $text\[$j] has already been merged into another profile....skipping\n";
 				next;
@@ -1702,7 +1704,6 @@ sub compareAllProfiles($$) {
 			} else {
 				printDebug($DBG_PROGRESS, ": NAME MISMATCH\n");
 			}
-			$profile_count++;
 		}
 	}
 	return ($profile_count, $match_count);
@@ -1747,8 +1748,6 @@ sub analyzeTreeConflict($$) {
 		$profile_id = $1;
 	}
 
-	printDebug($DBG_PROGRESS, "\nTree Conflict analyze for '$profile_id', type '$issue_type'\n");
-
 	my @fathers, my @mothers, my @spouses, my @sons, my @daughters, my @brothers, my @sisters;
 	my $filename = "$env{'datadir'}/$profile_id\.json";
 	my $url = "https://www.geni.com/api/profile-$profile_id/immediate-family?only_ids=true";
@@ -1769,11 +1768,14 @@ sub analyzeTreeConflict($$) {
 	my $a, my $b;
 	$env{'circa_range'} = 5;
 	if ($issue_type eq "parent") {
+		printDebug($DBG_PROGRESS, "\nTree Conflict analyze for '$profile_id', type '$issue_type'\n") if ($#fathers >= 0 || $#mothers >= 0);
+
 		($a, $b) = compareAllProfiles("Father", \@fathers); $profile_count += $a; $match_count += $b;
 		($a, $b) = compareAllProfiles("Mother", \@mothers); $profile_count += $a; $match_count += $b;
 	}
 
 	if ($issue_type eq "partner") {
+		printDebug($DBG_PROGRESS, "\nTree Conflict analyze for '$profile_id', type '$issue_type'\n") if ($#spouses >= 0);
 		($a, $b) = compareAllProfiles("Spouse", \@spouses); $profile_count += $a; $match_count += $b;
 	}
 
@@ -1781,17 +1783,19 @@ sub analyzeTreeConflict($$) {
 	# We could go back to +- 5 for those cases.
 	$env{'circa_range'} = 1;
 	if ($issue_type eq "children") {
+		printDebug($DBG_PROGRESS, "\nTree Conflict analyze for '$profile_id', type '$issue_type'\n") if ($#sons >= 0 || $#daughters >= 0);
 		($a, $b) = compareAllProfiles("Sons", \@sons); $profile_count += $a; $match_count += $b;
 		($a, $b) = compareAllProfiles("Daughters", \@daughters); $profile_count += $a; $match_count += $b;
 	}
 
 	if ($issue_type eq "siblings") {
+		printDebug($DBG_PROGRESS, "\nTree Conflict analyze for '$profile_id', type '$issue_type'\n") if ($#brothers >= 0 || $#sisters >= 0);
 		($a, $b) = compareAllProfiles("Brothers", \@brothers); $profile_count += $a; $match_count += $b;
 		($a, $b) = compareAllProfiles("Sisters", \@sisters); $profile_count += $a; $match_count += $b;
 	}
 
 	$env{'circa_range'} = 5;
-	printDebug($DBG_PROGRESS, "Matched $match_count/$profile_count\n");
+	printDebug($DBG_PROGRESS, "Matched $match_count/$profile_count\n") if ($profile_count);
 
 	unlink $filename if ($env{'delete_files'} && $match_count);
 }
@@ -2040,7 +2044,14 @@ sub rangeBeginEnd($$$$) {
 
 	my $json_page = getJSON($filename, $url, 0, 0);
 	my $conflict_count = $json_page->{'count'};
-	my $max_page = roundup($conflict_count/50);
+	my $max_page = 0;
+
+	# For some odd reason pending_merges are listed 20 per page while tree conflicts are listed 50 per page
+	if ($env{'action'} eq "pending_merges") {
+		$max_page = roundup($conflict_count/20);
+	} else {
+		$max_page = roundup($conflict_count/50);
+	}
 	printDebug($DBG_PROGRESS,
 		sprintf("There are %d %s spread over %d pages\n",
 			$conflict_count, $type, $max_page));
@@ -2115,6 +2126,7 @@ sub traverseJSONPages($$$$) {
 		return;
 	}
 
+	my $range_begin_original = $range_begin;
 	($range_begin, $range_end) = rangeBeginEnd($range_begin, $range_end, $type, $api_action);
 	my $filename = "$env{'datadir'}/$api_action\_$range_begin\.json";
 	my $url = apiURL($api_action, $range_begin, $focus_id);
@@ -2194,6 +2206,18 @@ sub traverseJSONPages($$$$) {
 	}
 
 	printDebug($DBG_PROGRESS, "$env{'matches'} matches out of $env{'profiles'} profiles\n\n");
+
+	if ($env{'loop'}) {
+		system "chmod 755 $env{'datadir'}/*.json";
+		print "unlink $env{'datadir'}/$api_action\_count.json\n";
+		unlink("$env{'datadir'}/$api_action\_count.json");
+		print "range_begin_original($range_begin_original), range_end($range_end)\n";
+
+		for (my $i = $range_begin_original; $i <= $range_end; $i++) {
+			unlink("$env{'datadir'}/$api_action\_$i.json");
+			print "unlink $env{'datadir'}/$api_action\_$i.json\n";
+		}
+	}
 }
 
 sub validateProfileID($) {
@@ -2408,7 +2432,6 @@ sub main() {
 	if ($env{'action'} eq "pending_merges") {
 		do {
 			traverseJSONPages($range_begin, $range_end, "PENDING_MERGES", 0);
-			system "rm -rf $env{'datadir'}/*" if ($env{'loop'});
 		} while ($env{'loop'});
 
 	} elsif ($env{'action'} eq "pending_merges_family_group") {
@@ -2428,7 +2451,6 @@ sub main() {
 	} elsif ($env{'action'} eq "tree_conflicts") {
 		do {
 			traverseJSONPages($range_begin, $range_end, "TREE_CONFLICTS", 0);
-			system "rm -rf $env{'datadir'}/*" if ($env{'loop'});
 		} while ($env{'loop'});
 
 	} elsif ($env{'action'} eq "tree_conflicts_recursive") {
@@ -2448,10 +2470,8 @@ sub main() {
 	} elsif ($env{'action'} eq "tree_matches") {
 		printDebug($DBG_PROGRESS, "NOTE: The -all option is not supported for Tree Matches\n") if $env{'all_of_geni'};
 		$env{'all_of_geni'} = 0;
-
 		do {
 			traverseJSONPages($range_begin, $range_end, "TREE_MATCHES", 0);
-			system "rm -rf $env{'datadir'}/*" if ($env{'loop'});
 		} while ($env{'loop'});
 
 	} elsif ($env{'action'} eq "tree_match") {
@@ -2468,7 +2488,6 @@ sub main() {
 	} elsif ($env{'action'} eq "data_conflicts") {
 		do {
 			traverseJSONPages($range_begin, $range_end, "DATA_CONFLICTS", 0);
-			system "rm -rf $env{'datadir'}/*" if ($env{'loop'});
 		} while ($env{'loop'});
 
 	} elsif ($env{'action'} eq "data_conflict") {
