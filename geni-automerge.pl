@@ -1065,6 +1065,9 @@ sub compareNamesGuts($$$) {
 	if ($left_name =~ /living/ || $right_name =~ /living/) {
 		return 0;
 	}
+	if ($left_name =~ /unknown/ || $right_name =~ /unknown/) {
+		return 0;
+	}
 	if ($left_name && !$right_name) {
 		return 1;
 	}
