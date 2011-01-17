@@ -2015,13 +2015,15 @@ sub analyzeDataConflict($) {
 }
 
 sub stackProfiles($$) {
-	my $primary_id		= shift;
+	my $primary_id		= convertGUIDToNodeID(shift);
 	my $IDs_to_stack	= shift;
 
 	geniLogin() if !$env{'logged_in'};
 	my $primary_url = "<a href=\"http://www.geni.com/profile-$primary_id\">$primary_id</a>";
-	$IDs_to_stack =~ s/ //g;
-	foreach my $id (split(/,/, $IDs_to_stack)) {
+	validateProfileID($primary_id);
+	foreach my $id (split(/\s*,\s*/, $IDs_to_stack)) {
+		$id = convertGUIDToNodeID($id);
+		validateProfileID($id);
 		if ($id !~ /^\d+$/) {
 			printDebug($DBG_PROGRESS, "ERROR: '$id' is not a valid profile ID\n");
 		}
@@ -2236,18 +2238,18 @@ sub validateProfileID($) {
 
 # Geni changed ID systems, use this to convert from old to new
 sub convertGUIDToNodeID($) {
-	my $guid = shift;
-
-	my $filename = "$env{'datadir'}/$guid\.json";
-	my $url = "https://www.geni.com/api/profile-G$guid";
-	my $json_profile = getJSON($filename, $url, $guid, 0);
-	return "" if (!$json_profile);
-
-	if ($json_profile->{'id'} =~ /profile-(\d+)$/) {
-		return $1;
+	my @ids;
+	foreach(split(/\s*,\s*/, (shift))){
+		my $filename = "$env{'datadir'}/$_\.json";
+		my $url = "https://www.geni.com/api/profile-G$_";
+		my $json_profile = getJSON($filename, $url, $_, 0);
+		next if !$json_profile;
+		
+		if ($json_profile->{'id'} =~ /profile-(\d+)$/) {
+			push @ids, $1;
+		}
 	}
-
-	return "";
+	return join(',', @ids);
 }
 
 sub main() {
@@ -2485,10 +2487,6 @@ sub main() {
 		analyzeTreeMatch($left_id);
 
 	} elsif ($env{'action'} eq "stack") {
-		$left_id = convertGUIDToNodeID($left_id);
-		$right_id = convertGUIDToNodeID($right_id);
-		validateProfileID($left_id);
-		validateProfileID($right_id);
 		stackProfiles($left_id, $right_id);
 
 	} elsif ($env{'action'} eq "data_conflicts") {
