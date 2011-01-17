@@ -1155,6 +1155,9 @@ sub compareNames($$$$$$) {
 	my $cache_result	= 0;
 
 	if ($left_name eq $right_name) {
+		if ($left_name =~ /living/ || $left_name =~ /unknown/) {
+			return 0;
+		}
 		printDebug($DBG_NONE,
 			sprintf("MATCH Whole Name: left '%s' vs. right '%s'\n",
 				$left_name,
