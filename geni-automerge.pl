@@ -52,7 +52,6 @@ sub init(){
 	$env{'merge_little_trees'}	= 0;
 	$env{'all_of_geni'}		= 0;
 	$env{'loop'}			= 0;
-	$env{'direction'}		= "asc"; # Must be asc or desc
 	$env{'delete_files'}		= 1;
 
 	$debug{"file_" . $DBG_NONE}		= 0;
@@ -850,10 +849,11 @@ sub doubleMetaphoneCompare($$) {
 		($left_code2 eq $right_code2 && $left_code2));
 }
 
-sub recordMergeComplete($$$) {
+sub recordMergeComplete($$$$) {
 	my $id1			= shift;
 	my $id2			= shift;
 	my $desc		= shift;
+	my $winner		= shift;
 
 	my $id1_url = "<a href=\"http://www.geni.com/profile-$id1\">$id1</a>";
 	my $id2_url = "<a href=\"http://www.geni.com/profile-$id2\">$id2</a>";
@@ -864,7 +864,7 @@ sub recordMergeComplete($$$) {
  				$year+1900, $mon+1, $mday, $hour, $min, $sec,
 				$env{'username'}, $desc, $id1_url, $id2_url), 1);
 	$env{'matches'}++;
-	$new_tree_conflicts{$id1} = 1;
+	$new_tree_conflicts{$winner} = 1;
 }
 
 sub cacheWrite($$$$) {
@@ -946,7 +946,6 @@ sub recordMergeFailure($$$) {
 				mergeURLHTML($id1, $id2),
 				$year+1900, $mon+1, $mday, $hour, $min, $sec,
 				$env{'username'}, $reason);
-	printDebug($DBG_PROGRESS, ": MERGE FAILED for $id1 and $id2\n");
 	write_file($env{'merge_fail_file'}, $fail_string, 1);
 	cacheWrite("cache_merge_fail", "$id1:$id2", "$id1:$id2", 1);
 }
@@ -973,7 +972,7 @@ sub nameCompareResultCached($$) {
 		if (cacheRead("cache_name_mismatch", "$id1:$id2") eq "NOT_A_MATCH") {
 			printDebug($DBG_PROGRESS, ": (CACHED) NAME MISMATCH\n");
 		} else {
-			printDebug($DBG_PROGRESS, ": (CACHED) NAME MATCH\n");
+			printDebug($DBG_PROGRESS, ": (CACHED) NAME MATCH");
 		}
 		return $cache_name_mismatch{"$id1:$id2"};
 	}
@@ -982,7 +981,7 @@ sub nameCompareResultCached($$) {
 		if (cacheRead("cache_name_mismatch", "$id2:$id1") eq "NOT_A_MATCH") {
 			printDebug($DBG_PROGRESS, ": (CACHED) NAME MISMATCH\n");
 		} else {
-			printDebug($DBG_PROGRESS, ": (CACHED) NAME MATCH\n");
+			printDebug($DBG_PROGRESS, ": (CACHED) NAME MATCH");
 		}
 		return $cache_name_mismatch{"$id2:$id1"};
 	}
@@ -1633,27 +1632,26 @@ sub mergeProfiles($$$) {
 	(my $sec, my $min, my $hour, my $mday, my $mon, my $year, my $wday, my $yday, my $isdst) = localtime(time);
 
 	if ($result->is_success) {
-		printDebug($DBG_PROGRESS, sprintf(": MERGING %s and %s\n", $id1, $id2));
 
 		# This happens if at least one of the profiles you tried to merge is private
-		if ($result->decoded_content =~ /merge requested/i) {
-			# printDebug($DBG_PROGRESS, sprintf("\nMERGE_RESULT: %s\n", $result->decoded_content));
-			# {"result":"profile-40714040 merged into profile-32150908 with conflicts"}
-			if ($result->decoded_content =~ /profile-\d+ merged into profile-(\d+)/) {
-				$winner = $1;
-			}
+		if ($result->decoded_content =~ /requested for a merge/i) {
+			printDebug($DBG_PROGRESS, sprintf(": MERGE REQUESTED for %s and %s\n", $id1, $id2));
 			recordMergeRequest($id1, $id2);
 
 		# The merge was ok
 		} else {
 			# printDebug($DBG_PROGRESS, sprintf("\nMERGE_RESULT: %s\n", $result->decoded_content));
-			recordMergeComplete($id1, $id2, $desc);
 			if ($result->decoded_content =~ /profile-\d+ merged into profile-(\d+)/) {
 				$winner = $1;
 			}
+			if ($winner == 0) {
+				die(sprintf("ERROR: %d and %d did not produce a winner, result'%s'\n", $id1, $id2, $result->decoded_content));
+			}
+			printDebug($DBG_PROGRESS, sprintf(": MERGE COMPLETED for %s and %s, winner %d\n", $id1, $id2, $winner));
+			recordMergeComplete($id1, $id2, $desc, $winner);
 		}
 	} else {
-		printDebug($DBG_PROGRESS, sprintf("\nMERGE_FAILURE_REASON: %s\n", $result->decoded_content));
+		printDebug($DBG_PROGRESS, sprintf(": MERGE FAILED for %s and %s due to %s\n", $id1, $id2, $result->decoded_content));
 		recordMergeFailure($id1, $id2, $result->decoded_content);
 	}
 
@@ -1685,7 +1683,7 @@ sub compareAllProfiles($$) {
 
 			(my $j_id, my $j_name, my $gender) = split(/:/, $profiles_array[$j]);
 
-			printDebug($DBG_PROGRESS, "TREE_CONFLICT_COMPARE: $text\[$i] $i_name vs. $text\[$j] $j_name\n");
+			printDebug($DBG_PROGRESS, "TREE_CONFLICT_COMPARE: $text\[$i] $i_name vs. $text\[$j] $j_name");
 			next if (nameCompareResultCached($i_id, $j_id) eq "NOT_A_MATCH");
 			next if (compareResultCached($i_id, $j_id));
 
@@ -1708,7 +1706,7 @@ sub compareAllProfiles($$) {
 					recordNonMatch($i_id, $j_id);
 				}
 			} else {
-				printDebug($DBG_MATCH_BASIC, ": NAME MISMATCH\n");
+				printDebug($DBG_PROGRESS, ": NAME MISMATCH\n");
 			}
 		}
 	}
@@ -1774,14 +1772,18 @@ sub analyzeTreeConflict($$) {
 	my $a, my $b;
 	$env{'circa_range'} = 5;
 	if ($issue_type eq "parent") {
-		printDebug($DBG_PROGRESS, "\nTree Conflict analyze for '$profile_id', type '$issue_type'\n") if ($#fathers >= 0 || $#mothers >= 0);
+		printDebug($DBG_PROGRESS,
+			sprintf("Tree Conflict analyze for '%d', type '%s', fathers %d, mothers %d\n",
+				$profile_id, $issue_type, $#fathers, $#mothers));
 
 		($a, $b) = compareAllProfiles("Father", \@fathers); $profile_count += $a; $match_count += $b;
 		($a, $b) = compareAllProfiles("Mother", \@mothers); $profile_count += $a; $match_count += $b;
 	}
 
 	if ($issue_type eq "partner") {
-		printDebug($DBG_PROGRESS, "\nTree Conflict analyze for '$profile_id', type '$issue_type'\n") if ($#spouses >= 0);
+		printDebug($DBG_PROGRESS,
+			sprintf("Tree Conflict analyze for '%d', type '%s', spouses %d\n",
+				$profile_id, $issue_type, $#spouses));
 		($a, $b) = compareAllProfiles("Spouse", \@spouses); $profile_count += $a; $match_count += $b;
 	}
 
@@ -1789,35 +1791,46 @@ sub analyzeTreeConflict($$) {
 	# We could go back to +- 5 for those cases.
 	$env{'circa_range'} = 1;
 	if ($issue_type eq "children") {
-		printDebug($DBG_PROGRESS, "\nTree Conflict analyze for '$profile_id', type '$issue_type'\n") if ($#sons >= 0 || $#daughters >= 0);
+		printDebug($DBG_PROGRESS,
+			sprintf("Tree Conflict analyze for '%d', type '%s', sons %d, daughters %d\n",
+				$profile_id, $issue_type, $#sons, $#daughters));
 		($a, $b) = compareAllProfiles("Sons", \@sons); $profile_count += $a; $match_count += $b;
 		($a, $b) = compareAllProfiles("Daughters", \@daughters); $profile_count += $a; $match_count += $b;
 	}
 
 	if ($issue_type eq "siblings") {
-		printDebug($DBG_PROGRESS, "\nTree Conflict analyze for '$profile_id', type '$issue_type'\n") if ($#brothers >= 0 || $#sisters >= 0);
+		printDebug($DBG_PROGRESS,
+			sprintf("Tree Conflict analyze for '%d', type '%s', brothers %d, sisters %d\n",
+				$profile_id, $issue_type, $#brothers, $#sisters));
 		($a, $b) = compareAllProfiles("Brothers", \@brothers); $profile_count += $a; $match_count += $b;
 		($a, $b) = compareAllProfiles("Sisters", \@sisters); $profile_count += $a; $match_count += $b;
 	}
 
 	$env{'circa_range'} = 5;
-	printDebug($DBG_PROGRESS, "Matched $match_count/$profile_count\n") if ($profile_count);
-
 	unlink $filename if ($env{'delete_files'} && $match_count);
 }
 
 # Resolve any new tree conflicts that were created. This could in turn
 # create more tree conflicts so this loop could run for a while.
 sub analyzeNewTreeConflicts() {
-	foreach my $id (keys %new_tree_conflicts) {
-		print "NEW_TREE_CONFLICTS: $id\n";
-		analyzeTreeConflict($id, "parent");
-		analyzeTreeConflict($id, "siblings");
-		analyzeTreeConflict($id, "partner");
-		analyzeTreeConflict($id, "children");
-		delete $new_tree_conflicts{$id};
-		unlink "$env{'datadir'}/$id\.json" if ($env{'delete_files'});
+	if (!(scalar keys %new_tree_conflicts)) {
+		return;
 	}
+
+	do {
+		printDebug($DBG_PROGRESS,
+			sprintf("\n\nNEW_TREE_CONFLICTS: Analyzing new tree conflicts, there are %d of them\n",
+				scalar keys %new_tree_conflicts));
+
+		foreach my $id (keys %new_tree_conflicts) {
+			analyzeTreeConflict($id, "parent");
+			analyzeTreeConflict($id, "siblings");
+			analyzeTreeConflict($id, "partner");
+			analyzeTreeConflict($id, "children");
+			delete $new_tree_conflicts{$id};
+			unlink "$env{'datadir'}/$id\.json" if ($env{'delete_files'});
+		}
+	} while (scalar keys %new_tree_conflicts);
 }
 
 sub jsonToFamilyArrays($$$$$$$$$) {
@@ -2044,9 +2057,15 @@ sub rangeBeginEnd($$$$) {
 				$env{'datadir'}, $api_action);
 	# Delete the file so we'll recalculate max_page everytime
 	unlink $filename;
-	my $url = sprintf("https://www.geni.com/api/profile/%s?collaborators=true&count=true%s",
+	printf STDERR ("https://www.geni.com/api/profile/%s?%s&count=true%s\n",
 			$api_action,
-			$env{'all_of_geni'} ? "&all=true" : "");
+			$env{'all_of_geni'} ? "all=true" : "collaborators=true",
+			$env{'yesterday'} ? "&since=yesterday" : "");
+
+	my $url = sprintf("https://www.geni.com/api/profile/%s?%s&count=true%s",
+			$api_action,
+			$env{'all_of_geni'} ? "all=true" : "collaborators=true",
+			$env{'yesterday'} ? "&since=yesterday" : "");
 
 	my $json_page = getJSON($filename, $url, 0, 0);
 	my $conflict_count = $json_page->{'count'};
@@ -2084,19 +2103,21 @@ sub rangeBeginEnd($$$$) {
 	return ($range_begin, $range_end);
 }
 
-sub apiURL($$$) {
+sub apiURL($$) {
 	my $api_action	= shift;
 	my $page	= shift;
-	my $focus_id	= shift;
 
 	# pass "only_ids=true" when they get the API fixed
-	# Note: focus_id isn't supported by the API yet
-	return sprintf("https://www.geni.com/api/profile/%s?%s&only_ids=true&order=last_modified_at&direction=%s&page=%s%s",
+	printf STDERR ("https://www.geni.com/api/profile/%s?%s&only_ids=true%s&page=%d\n",
 			$api_action,
-			$focus_id ? "focus_id=$focus_id" : "collaborators=true",
-			$env{'direction'},
-			$page,
-			$env{'all_of_geni'} ? "&all=true" : "");
+			$env{'all_of_geni'} ? "all=true" : "collaborators=true",
+			$env{'yesterday'} ? "&since=yesterday" : "",
+			$page);
+	return sprintf ("https://www.geni.com/api/profile/%s?%s&only_ids=true%s&page=%d",
+			$api_action,
+			$env{'all_of_geni'} ? "all=true" : "collaborators=true",
+			$env{'yesterday'} ? "&since=yesterday" : "",
+			$page);
 }
 
 #
@@ -2135,7 +2156,7 @@ sub traverseJSONPages($$$$) {
 	my $range_begin_original = $range_begin;
 	($range_begin, $range_end) = rangeBeginEnd($range_begin, $range_end, $type, $api_action);
 	my $filename = "$env{'datadir'}/$api_action\_$range_begin\.json";
-	my $url = apiURL($api_action, $range_begin, $focus_id);
+	my $url = apiURL($api_action, $range_begin);
 	my $json_page = getJSON($filename, $url, 0, 0);
 	if (!$json_page) {
 		return 0;
@@ -2146,7 +2167,7 @@ sub traverseJSONPages($$$$) {
 		$url =~ /page=(\d+)/;
 		my $page = $1;
 		if ($page + 1 <= $range_end) {
-			$next_url = apiURL($api_action, $page + 1, $focus_id);
+			$next_url = apiURL($api_action, $page + 1);
 		} else {
 			$next_url = "";
 		}
@@ -2177,6 +2198,7 @@ sub traverseJSONPages($$$$) {
 				$right_id =~ s/profile-//;
 				analyzePendingMerge($left_id, $right_id);
 			} elsif ($type eq "TREE_CONFLICTS") {
+				printDebug($DBG_PROGRESS, "\n");
 				my $conflict_type = $json_list_entry->{'issue_type'};
 				my $profile_id = $json_list_entry->{'profile'};
 				$profile_id =~ s/profile-//;
@@ -2191,7 +2213,9 @@ sub traverseJSONPages($$$$) {
 					printDebug($DBG_PROGRESS, "ERROR: Unknown tree conflict type '$conflict_type'\n");
 					next;
 				}
+				analyzeNewTreeConflicts();
 				unlink "$env{'datadir'}/$profile_id\.json" if ($env{'delete_files'});
+				printDebug($DBG_PROGRESS, "\n\n");
 			} elsif ($type eq "TREE_MATCHES") {
 				analyzeTreeMatch(0);
 			} elsif ($type eq "DATA_CONFLICTS") {
@@ -2318,6 +2342,9 @@ sub main() {
 		} elsif ($ARGV[$i] eq "-all" || $ARGV[$i] eq "-all_of_geni") {
 			$env{'all_of_geni'} = 1;
 
+		} elsif ($ARGV[$i] eq "-y") {
+			$env{'yesterday'} = 1;
+
 		} elsif ($ARGV[$i] eq "-rb") {
 			$range_begin = $ARGV[++$i];
 
@@ -2347,13 +2374,6 @@ sub main() {
 			$env{'action'} = "focal";
 			$left_id = $ARGV[++$i];
 			$right_id = $ARGV[++$i];
-
-		# This is used if you want to loop through the most recent merges over and over.
-		# So "-loop -desc -rb 1 -re 50" will loop through the first 50 pages of merge
-		# issues over and over again.  These are likely to be merge issues from the past
-		# 48 hours or so.
-		} elsif ($ARGV[$i] eq "-desc") {
-			$env{'direction'} = "desc";
 
 		} elsif ($ARGV[$i] eq "-cp" || $ARGV[$i] eq "-check_public") {
 			$env{'action'} = "check_public";
