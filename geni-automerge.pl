@@ -53,14 +53,15 @@ sub init(){
 	$env{'all_of_geni'}		= 0;
 	$env{'loop'}			= 0;
 	$env{'delete_files'}		= 1;
+	$env{'yesterday'}		= 0;
 
-	$debug{"file_" . $DBG_NONE}		= 0;
-	$debug{"file_" . $DBG_PROGRESS}		= 0;
+	$debug{"file_" . $DBG_NONE}		= 1;
+	$debug{"file_" . $DBG_PROGRESS}		= 1;
 	$debug{"file_" . $DBG_IO}		= 0;
 	$debug{"file_" . $DBG_URLS}		= 0;
 	$debug{"file_" . $DBG_NAMES}		= 0;
 	$debug{"file_" . $DBG_JSON}		= 0;
-	$debug{"file_" . $DBG_MATCH_BASIC}	= 0;
+	$debug{"file_" . $DBG_MATCH_BASIC}	= 1;
 	$debug{"file_" . $DBG_MATCH_DATE}	= 0;
 	$debug{"file_" . $DBG_TIME}		= 0;
 	$debug{"console_" . $DBG_NONE}		= 0;
@@ -101,6 +102,8 @@ sub init(){
 	$blacklist_managers{"6000000009948172621"} = 1;
 	$blacklist_managers{"6000000007167930983"} = 1;
 	$blacklist_managers{"6000000007190994696"} = 1;
+	$blacklist_managers{"6000000009469375304"} = 1;
+	$blacklist_managers{"6000000009668408981"} = 1;
 }
 
 
@@ -351,7 +354,7 @@ sub timestampDelta($$) {
 
 #
 # Return TRUE if $time_A and $time_B are within $threshold of each other.
-# $threshold should be in seconds.  Always pass the most recent time as time_A. 
+# $threshold should be in seconds.  Always pass the most recent time as time_A.
 #
 sub timesInRange($$$) {
 	my $time_A = shift;
@@ -411,7 +414,7 @@ sub numbersInRange($$$$) {
 
 	return 1 if ((!$number1 && $number2) || ($number1 && !$number2));
 	return (abs(($number1) - ($number2)) <= $circa_range ? 1 : 0) if $circa;
-	return ($number1 == $number2); 
+	return ($number1 == $number2);
 }
 
 sub monthDayYear($) {
@@ -459,7 +462,7 @@ sub dateMatches($$) {
 	my $debug_string = "date1($date1) vs. date2($date2)\n";
 
 	if ($date1 eq $date2) {
-		# To reduce debug output, don't print the debug when both are "" 
+		# To reduce debug output, don't print the debug when both are ""
 		printDebug($DBG_MATCH_DATE, "MATCH: $debug_string") if $date1 ne "";
 		return 1;
 	}
@@ -469,7 +472,7 @@ sub dateMatches($$) {
 		 ($date1 eq "" && $date2 ne "")) {
 		printDebug($DBG_MATCH_DATE, "MATCH: $debug_string");
 		return 1;
-	} 
+	}
 
 	my $date1_month = 0;
 	my $date1_day	= 0;
@@ -513,9 +516,9 @@ sub dateMatches($$) {
 #	printDebug($DBG_MATCH_DATE, " circa      : $circa\n\n");
 
 	if (numbersInRange($date1_year, $date2_year, $circa, $env{'circa_range'})) {
-		if (($date1_month && $date2_month && $date1_month == $date2_month) || 
+		if (($date1_month && $date2_month && $date1_month == $date2_month) ||
 			(!$date1_month || !$date2_month)) {
-			if (numbersInRange($date1_day, $date2_day, $day_circa, $day_circa_range)) { 
+			if (numbersInRange($date1_day, $date2_day, $day_circa, $day_circa_range)) {
 				printDebug($DBG_MATCH_DATE, "MATCH: $debug_string");
 				return 1;
 			}
@@ -613,7 +616,7 @@ sub cleanupNameGuts($) {
 				"command",
 				"corporal", "cpl",
 				"count", "countess", "ct", "cnt",
-				"csa", 
+				"csa",
 				"general", "gen", "brigadier",
 				"governor", "gov",
 				"gunnery",
@@ -679,7 +682,7 @@ sub cleanupNameGuts($) {
 	$name =~ s/\s+$//;
 
 	# Combine repeating words in a name like "Robert Robert" or
-	# "tiberius claudius nero claudius tiberius claudius nero" 
+	# "tiberius claudius nero claudius tiberius claudius nero"
 	my @final_name;
 	my %name_components;
 	foreach my $i(split(/ /, $name)) {
@@ -763,7 +766,7 @@ sub getMaleLastNames($) {
 }
 
 #
-# Construct names consistently 
+# Construct names consistently
 #
 sub cleanupName($$$$) {
 	my $first	= shift;
@@ -807,7 +810,7 @@ sub oddCharCount($) {
 	my $odd_char_count = 0;
 	foreach my $char (split(//, $name)) {
 		# DO NOTE USE \w here, it matches on hebrew characters
-		if ($char !~ /a-ZA-Z0-9/) {
+		if ($char !~ /[a-zA-Z0-9]/) {
 			$odd_char_count++;
 		}
 	}
@@ -1079,7 +1082,7 @@ sub compareNamesGuts($$$) {
 
 	# This can only happen if we're looking at a profile with multiple middle names.
 	# If that is the case then don't consider "R. vs. Robert" a match.  The reason
-	# being there could be 5 middle names and it would be too easy for one of them 
+	# being there could be 5 middle names and it would be too easy for one of them
 	# to match an initial.
 	if ($left_name =~ /\s/ || $right_name =~ /\s/) {
 		$compare_initials = 0;
@@ -1169,8 +1172,8 @@ sub compareNames($$$$$$) {
 		return 0;
 	}
 
-	(my $left_first_name, my $left_middle_name, my $left_last_name, my $left_maiden_name) = nameToFirstMiddleLastMaiden($left_name); 
-	(my $right_first_name, my $right_middle_name, my $right_last_name, my $right_maiden_name) = nameToFirstMiddleLastMaiden($right_name); 
+	(my $left_first_name, my $left_middle_name, my $left_last_name, my $left_maiden_name) = nameToFirstMiddleLastMaiden($left_name);
+	(my $right_first_name, my $right_middle_name, my $right_last_name, my $right_maiden_name) = nameToFirstMiddleLastMaiden($right_name);
 
 	my $first_name_matches = compareNamesGuts(1, $left_first_name, $right_first_name);
 	printDebug($DBG_NONE,
@@ -1250,7 +1253,7 @@ sub profileBasicsMatch($$) {
 	my $right_profile = shift;
 	my $score = 0;
 
-	my $left_name = 
+	my $left_name =
 		cleanupName($left_profile->first_name,
 			$left_profile->middle_name,
 			$left_profile->last_name,
@@ -1333,7 +1336,7 @@ sub comparePartners($$$$) {
 	my $left_partners	= shift;
 	my $right_partners	= shift;
 
-	if (($left_partners && !$right_partners) || (!$left_partners && $right_partners)) { 
+	if (($left_partners && !$right_partners) || (!$left_partners && $right_partners)) {
 		return 1;
 	}
 
@@ -1341,7 +1344,7 @@ sub comparePartners($$$$) {
 	# printDebug($DBG_MATCH_BASIC, sprintf("-left  : %s\n", $left_partners));
 	# printDebug($DBG_MATCH_BASIC, sprintf("-right : %s\n", $right_partners));
 
-	if ($left_partners eq $right_partners && !$left_partners) { 
+	if ($left_partners eq $right_partners && !$left_partners) {
 		printDebug($DBG_MATCH_BASIC, "MATCH: $partner_type '$left_partners' are a match\n");
 		return 1;
 	}
@@ -1453,7 +1456,7 @@ sub getJSON($$$$) {
 	my $json_structure = $json->allow_nonref->relaxed->decode($json_data);
 	close INF;
 
-	printDebug($DBG_JSON, sprintf ("Pretty JSON:\n%s", $json->pretty->encode($json_structure))); 
+	printDebug($DBG_JSON, sprintf ("Pretty JSON:\n%s", $json->pretty->encode($json_structure)));
 	return $json_structure;
 }
 
@@ -1512,25 +1515,27 @@ sub compareProfiles($$) {
 			return 0;
 		}
 
-		# They keep changing the format for how they list managers :( 
-		# Make this work for the old and new format and bail out if 
-		# they change it again. 
-		my @managers; 
-		if(ref($json_profile->{'focus'}->{'managers'}) eq "ARRAY") { #arrayref 
-			foreach my $manager_line (@{$json_profile->{'focus'}->{'managers'}}) { 
-				if ($manager_line =~ /profiles\/(.*)$/) { 
-					push @managers, split(/,/, $1); 
-				} elsif ($manager_line =~ /^profile-(\d+)$/) { 
-					push @managers, $1; 
-				} else { 
-					gracefulExit("ERROR: Manager line '$manager_line' is invalid.\n"); 
-				} 
-			} 
-		}elsif(ref($json_profile->{'focus'}->{'managers'}) eq 'SCALAR'){ 
-			my @a = split(/\D+/,$$json_profile->{'focus'}->{'managers'}); 
-			foreach(@a){ 
-				if(length($_) > 5){ push @managers, $_; } 
-			} 
+		# They keep changing the format for how they list managers :(
+		# Make this work for the old and new format and bail out if
+		# they change it again.
+		my @managers;
+		if(ref($json_profile->{'focus'}->{'managers'}) eq "ARRAY") { #arrayref
+			foreach my $manager_line (@{$json_profile->{'focus'}->{'managers'}}) {
+				if ($manager_line =~ /profiles\/(.*)$/) {
+					push @managers, split(/,/, $1);
+				} elsif ($manager_line =~ /^profile-(\d+)$/) {
+					push @managers, $1;
+				} else {
+					gracefulExit("ERROR: Manager line '$manager_line' is invalid.\n");
+				}
+			}
+		} elsif (ref($json_profile->{'focus'}->{'managers'}) eq 'SCALAR') {
+			my @a = split(/\D+/,$$json_profile->{'focus'}->{'managers'});
+			foreach (@a) {
+				if (length($_) > 5) { push @managers, $_; }
+			}
+		} else {
+			# printDebug($DBG_PROGRESS, "MANAGERS output has a new format\n");
 		}
 
 		# Do not merge a profile managed by any of the blacklist_managers
@@ -1551,7 +1556,7 @@ sub compareProfiles($$) {
 		$geni_profile->maiden_name($json_profile->{'focus'}->{'maiden_name'});
 		$geni_profile->suffix($json_profile->{'focus'}->{'suffix'});
 		$geni_profile->gender($json_profile->{'focus'}->{'gender'});
-		$geni_profile->living($json_profile->{'focus'}->{'living'});
+		$geni_profile->living($json_profile->{'focus'}->{'is_alive'});
 		$geni_profile->death_date($json_profile->{'focus'}->{'death_date'});
 		$geni_profile->death_year($json_profile->{'focus'}->{'death_year'});
 		$geni_profile->birth_date($json_profile->{'focus'}->{'birth_date'});
@@ -1716,6 +1721,7 @@ sub compareAllProfiles($$) {
 sub checkPublic($) {
 	my $profile_id	= shift;
 	if (!$profile_id) {
+		printDebug($DBG_NONE, "\nPRIVATE_PROFILE INVALID ID: $profile_id\n");
 		return 0;
 	}
 
@@ -1735,9 +1741,11 @@ sub checkPublic($) {
 		# todo: if we ever get a hunt_zombies API this is the scenario where we should run it
 		printDebug($DBG_NONE,
 			"\nPRIVATE_PROFILE: $profile_id was converted from private to public\n");
+		write_file($env{'new_public'}, "$profile_id\n", 1);
 	} else {
 		printDebug($DBG_NONE,
-			"\nPRIVATE_PROFILE: $profile_id could not be converted from private to public\n");
+			sprintf("\nPRIVATE_PROFILE: $profile_id could not be converted from private to public. Response '%s'\n",
+				$profile_id, $result->decoded_content));
 		cacheWrite("cache_private_profiles", "$profile_id", "$profile_id", 1);
 	}
 
@@ -1762,9 +1770,9 @@ sub analyzeTreeConflict($$) {
 
 	jsonToFamilyArrays($json_profile, $profile_id, \@fathers, \@mothers, \@spouses, \@sons, \@daughters, \@brothers, \@sisters);
 	my $ugly_count = 0;
-	$ugly_count += $#fathers + 1 if ($#fathers >= 0); 
-	$ugly_count += $#mothers + 1 if ($#mothers >= 0); 
-	$ugly_count += $#spouses + 1 if ($#spouses >= 0); 
+	$ugly_count += $#fathers + 1 if ($#fathers >= 0);
+	$ugly_count += $#mothers + 1 if ($#mothers >= 0);
+	$ugly_count += $#spouses + 1 if ($#spouses >= 0);
 	write_file($env{'ugly_file'}, "$ugly_count <a href=\"http://www.geni.com/profile-$profile_id\">$profile_id</a>\n", 1);
 
 	my $profile_count = 0;
@@ -1819,7 +1827,8 @@ sub analyzeNewTreeConflicts() {
 
 	do {
 		printDebug($DBG_PROGRESS,
-			sprintf("\n\nNEW_TREE_CONFLICTS: Analyzing new tree conflicts, there are %d of them\n",
+			sprintf("\n\nNEW_TREE_CONFLICTS: Analyzing new tree conflicts, there %s %d of them\n",
+				(scalar keys %new_tree_conflicts > 1) ? "are" : "is",
 				scalar keys %new_tree_conflicts));
 
 		foreach my $id (keys %new_tree_conflicts) {
@@ -1860,7 +1869,7 @@ sub jsonToFamilyArrays($$$$$$$$$) {
 		if ($json_profile->{'nodes'}->{$i}->{'edges'}->{"profile-$profile_id"}->{'rel'} eq "child") {
 			$partner_type = "parents";
 
-		# The "partners" will be spouses 
+		# The "partners" will be spouses
 		} elsif ($json_profile->{'nodes'}->{$i}->{'edges'}->{"profile-$profile_id"}->{'rel'} eq "partner") {
 			$partner_type = "spouses";
 		}
@@ -2234,6 +2243,7 @@ sub traverseJSONPages($$$$) {
 				int(($loop_run_time % 3600) / 60),
 			int($loop_run_time % 60)));
 		printDebug($DBG_PROGRESS, "$env{'matches'} matches out of $env{'profiles'} profiles so far\n\n");
+		# loadCache() if ($env{'yesterday'} == 0);
 		loadCache();
 	}
 
@@ -2297,7 +2307,7 @@ sub main() {
 		} elsif ($ARGV[$i] eq "-p" || $ARGV[$i] eq "-password") {
 			$env{'password'} = $ARGV[++$i];
 
-		# At least of of these is required 
+		# At least of of these is required
 		} elsif ($ARGV[$i] eq "-pms" || $ARGV[$i] eq "-pending_merges") {
 			$env{'action'} = "pending_merges";
 
@@ -2381,7 +2391,7 @@ sub main() {
 			$env{'action'} = "check_public";
 			$left_id = $ARGV[++$i];
 
-		} else { 
+		} else {
 			printDebug($DBG_PROGRESS, "ERROR: '$ARGV[$i]' is not a supported arguement\n");
 			printHelp();
 		}
@@ -2409,6 +2419,7 @@ sub main() {
 	$env{'merge_log_file'}		= "merge_log.html";
 	$env{'merge_fail_file'}		= "merge_fail.html";
 	$env{'ugly_file'}		= "ugly_profiles.html";
+	$env{'new_public'}		= "new_public.txt";
 	$env{'cache_merge_request'}	= "cache_merge_request.txt";
 	$env{'cache_merge_fail'}	= "cache_merge_fail.txt";
 	$env{'cache_no_match'}		= "cache_no_match.txt";
@@ -2443,6 +2454,8 @@ sub main() {
 	write_file($env{'merge_log_file'}, "<pre>", 0) if !(-e $env{'merge_log_file'});
 	write_file($env{'merge_fail_file'}, "<html><head><title>geni-automerge Failed Merges</title></head><pre>", 0) if !(-e $env{'merge_fail_file'});
 	write_file($env{'ugly_file'}, "<pre>\n", 0) if !(-e $env{'ugly_file'});
+	write_file($env{'new_public'}, "\n", 0) if !(-e $env{'new_public'});
+	# loadCache() if ($env{'yesterday'} == 0);
 	loadCache();
 
 	if ($env{'password'} eq "") {
