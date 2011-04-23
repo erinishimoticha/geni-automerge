@@ -98,12 +98,15 @@ sub init(){
 	# It is a long story but for now don't merge profiles managed by the following:
 	# http://www.geni.com/people/Wendy-Hynes/6000000003753338015#/tab/overview
 	# http://www.geni.com/people/Alan-Sciascia/6000000009948172621#/tab/overview
-	$blacklist_managers{"6000000003753338015"} = 1;
-	$blacklist_managers{"6000000009948172621"} = 1;
-	$blacklist_managers{"6000000007167930983"} = 1;
-	$blacklist_managers{"6000000007190994696"} = 1;
-	$blacklist_managers{"6000000009469375304"} = 1;
-	$blacklist_managers{"6000000009668408981"} = 1;
+	$blacklist_managers{"27588722"} = 1;
+	$blacklist_managers{"55714895"} = 1;
+	$blacklist_managers{"72359769"} = 1;
+	$blacklist_managers{"75085998"} = 1;
+	$blacklist_managers{"75256236"} = 1;
+	$blacklist_managers{"94546550"} = 1;
+	$blacklist_managers{"100513811"} = 1;
+	$blacklist_managers{"102850453"} = 1;
+	$blacklist_managers{"112059990"} = 1;
 }
 
 
@@ -314,7 +317,7 @@ sub jsonSanityCheck($) {
 	# This should catch any other hosed json file before we hand it to the JSON
 	# code which will crash the script when it sees the corrupted data.
 	if ($json_data !~ /^\[\{.*\}\]$/ && $json_data !~ /^\{.*\}$/) {
-		printDebug($DBG_NONE, "ERROR: Unknown json format '$json_data' for '$filename'\n");
+		printDebug($DBG_PROGRESS, "ERROR: Unknown json format '$json_data' for '$filename'\n");
 		return 0;
 	}
 
@@ -733,7 +736,7 @@ sub getMaleLastNames($) {
 	return ("","") if (!$json_profile);
 
 	my @fathers, my @mothers, my @spouses, my @sons, my @daughters, my @brothers, my @sisters;
-	jsonToFamilyArrays($json_profile, $profile_id, \@fathers, \@mothers, \@spouses, \@sons, \@daughters, \@brothers, \@sisters);
+	jsonToFamilyArrays($json_profile, $profile_id, \@fathers, \@mothers, \@spouses, \@sons, \@daughters, \@brothers, \@sisters, 1);
 
 	# If the last names of all fathers are the same then return that name.
 	# If there is any disagreement return "".
@@ -1470,7 +1473,7 @@ sub compareProfiles($$) {
 		printDebug($DBG_PROGRESS, "ERROR: compareProfiles was given an invalid id1 '$id1' or id2 '$id2'\n");
 		return 0;
 	}
-	my $profiles_url = "https://www.geni.com/api/profile-$id1/compare/profile-$id2?only_ids=true";
+	my $profiles_url = "https://www.geni.com/api/profile-$id1/compare/profile-$id2?only_ids=true&field_group=all";
 	my $filename = sprintf("$env{'datadir'}/%s-%s.json", $id1, $id2);
 	my $json_text = getJSON($filename, $profiles_url, $id1, $id2);
 	if (!$json_text) {
@@ -1535,7 +1538,9 @@ sub compareProfiles($$) {
 				if (length($_) > 5) { push @managers, $_; }
 			}
 		} else {
-			# printDebug($DBG_PROGRESS, "MANAGERS output has a new format\n");
+			# This should never happen so if it does bail out and figure out what geni changed....again :(
+			printDebug($DBG_PROGRESS, "MANAGERS output has a new format\n");
+			exit();
 		}
 
 		# Do not merge a profile managed by any of the blacklist_managers
@@ -1571,7 +1576,7 @@ sub compareProfiles($$) {
 		}
 		
 		my @fathers, my @mothers, my @spouses, my @sons, my @daughters, my @brothers, my @sisters;
-		jsonToFamilyArrays($json_profile, $profile_id, \@fathers, \@mothers, \@spouses, \@sons, \@daughters, \@brothers, \@sisters);
+		jsonToFamilyArrays($json_profile, $profile_id, \@fathers, \@mothers, \@spouses, \@sons, \@daughters, \@brothers, \@sisters, 1);
 		$geni_profile->fathers(join("::", @fathers));
 		$geni_profile->mothers(join("::", @mothers));
 		$geni_profile->spouses(join("::", @spouses));
@@ -1584,7 +1589,7 @@ sub compareProfiles($$) {
 	# return a different merge comparison than what we asked for
 	if (($left_profile->id ne $id1 && $left_profile->id ne $id2) ||
 	    ($right_profile->id ne $id1 && $right_profile->id ne $id2)) {
-		printDebug($DBG_NONE,
+		printDebug($DBG_PROGRESS,
 			sprintf("WEIRD: asked for '%s' and '%s' but got '%s' and '%s'\n",
 				$id1, $id2, $left_profile->id, $right_profile->id));
 		return 0;
@@ -1721,7 +1726,7 @@ sub compareAllProfiles($$) {
 sub checkPublic($) {
 	my $profile_id	= shift;
 	if (!$profile_id) {
-		printDebug($DBG_NONE, "\nPRIVATE_PROFILE INVALID ID: $profile_id\n");
+		printDebug($DBG_PROGRESS, "\nPRIVATE_PROFILE INVALID ID: $profile_id\n");
 		return 0;
 	}
 
@@ -1744,12 +1749,35 @@ sub checkPublic($) {
 		write_file($env{'new_public'}, "$profile_id\n", 1);
 	} else {
 		printDebug($DBG_NONE,
-			sprintf("\nPRIVATE_PROFILE: $profile_id could not be converted from private to public. Response '%s'\n",
-				$profile_id, $result->decoded_content));
+			sprintf("\nPRIVATE_PROFILE: %d could not be converted from private to public. is_success '%s', Response '%s'\n",
+				$profile_id,
+				($result->is_success) ? "yes" : "no",
+				$result->decoded_content));
 		cacheWrite("cache_private_profiles", "$profile_id", "$profile_id", 1);
 	}
 
 	return $profile_is_public;
+}
+
+sub analyzeUglyFactor($) {
+	my $profile_id	= shift;
+
+	my @fathers, my @mothers, my @spouses, my @sons, my @daughters, my @brothers, my @sisters;
+	my $filename = "$env{'datadir'}/$profile_id\.json";
+	my $url = "https://www.geni.com/api/profile-$profile_id/immediate-family?only_ids=true";
+	my $json_profile = getJSON($filename, $url, $profile_id, 0);
+	if (!$json_profile) {
+		return 0;
+	}
+
+	jsonToFamilyArrays($json_profile, $profile_id, \@fathers, \@mothers, \@spouses, \@sons, \@daughters, \@brothers, \@sisters, 0);
+	my $ugly_father = ($#fathers >= 0) ? ($#fathers + 1) : 0;
+	my $ugly_mother = ($#mothers >= 0) ? ($#mothers + 1) : 0;
+	my $ugly_spouse = ($#spouses >= 0) ? ($#spouses + 1) : 0;
+	my $ugly_string = sprintf("%d %d:%d:%d <a href=\"http://www.geni.com/profile-%d\">%d</a>\n",
+				$ugly_father + $ugly_mother + $ugly_spouse, $ugly_father, $ugly_mother, $ugly_spouse, $profile_id, $profile_id);
+	write_file($env{'ugly_file'}, $ugly_string, 1);
+	unlink $filename if ($env{'delete_files'});
 }
 
 sub analyzeTreeConflict($$) {
@@ -1768,12 +1796,7 @@ sub analyzeTreeConflict($$) {
 		return 0;
 	}
 
-	jsonToFamilyArrays($json_profile, $profile_id, \@fathers, \@mothers, \@spouses, \@sons, \@daughters, \@brothers, \@sisters);
-	my $ugly_count = 0;
-	$ugly_count += $#fathers + 1 if ($#fathers >= 0);
-	$ugly_count += $#mothers + 1 if ($#mothers >= 0);
-	$ugly_count += $#spouses + 1 if ($#spouses >= 0);
-	write_file($env{'ugly_file'}, "$ugly_count <a href=\"http://www.geni.com/profile-$profile_id\">$profile_id</a>\n", 1);
+	jsonToFamilyArrays($json_profile, $profile_id, \@fathers, \@mothers, \@spouses, \@sons, \@daughters, \@brothers, \@sisters, 1);
 
 	my $profile_count = 0;
 	my $match_count = 0;
@@ -1782,7 +1805,7 @@ sub analyzeTreeConflict($$) {
 	if ($issue_type eq "parent") {
 		printDebug($DBG_PROGRESS,
 			sprintf("Tree Conflict analyze for '%d', type '%s', fathers %d, mothers %d\n",
-				$profile_id, $issue_type, $#fathers, $#mothers));
+				$profile_id, $issue_type, $#fathers + 1, $#mothers + 1));
 
 		($a, $b) = compareAllProfiles("Father", \@fathers); $profile_count += $a; $match_count += $b;
 		($a, $b) = compareAllProfiles("Mother", \@mothers); $profile_count += $a; $match_count += $b;
@@ -1791,17 +1814,17 @@ sub analyzeTreeConflict($$) {
 	if ($issue_type eq "partner") {
 		printDebug($DBG_PROGRESS,
 			sprintf("Tree Conflict analyze for '%d', type '%s', spouses %d\n",
-				$profile_id, $issue_type, $#spouses));
+				$profile_id, $issue_type, $#spouses + 1));
 		($a, $b) = compareAllProfiles("Spouse", \@spouses); $profile_count += $a; $match_count += $b;
 	}
 
 	# todo: need a better way to handle this if the profiles we're comparing have spouses.
 	# We could go back to +- 5 for those cases.
-	$env{'circa_range'} = 1;
+	$env{'circa_range'} = 0;
 	if ($issue_type eq "children") {
 		printDebug($DBG_PROGRESS,
 			sprintf("Tree Conflict analyze for '%d', type '%s', sons %d, daughters %d\n",
-				$profile_id, $issue_type, $#sons, $#daughters));
+				$profile_id, $issue_type, $#sons + 1, $#daughters + 1));
 		($a, $b) = compareAllProfiles("Sons", \@sons); $profile_count += $a; $match_count += $b;
 		($a, $b) = compareAllProfiles("Daughters", \@daughters); $profile_count += $a; $match_count += $b;
 	}
@@ -1809,7 +1832,7 @@ sub analyzeTreeConflict($$) {
 	if ($issue_type eq "siblings") {
 		printDebug($DBG_PROGRESS,
 			sprintf("Tree Conflict analyze for '%d', type '%s', brothers %d, sisters %d\n",
-				$profile_id, $issue_type, $#brothers, $#sisters));
+				$profile_id, $issue_type, $#brothers + 1, $#sisters + 1));
 		($a, $b) = compareAllProfiles("Brothers", \@brothers); $profile_count += $a; $match_count += $b;
 		($a, $b) = compareAllProfiles("Sisters", \@sisters); $profile_count += $a; $match_count += $b;
 	}
@@ -1842,7 +1865,7 @@ sub analyzeNewTreeConflicts() {
 	} while (scalar keys %new_tree_conflicts);
 }
 
-sub jsonToFamilyArrays($$$$$$$$$) {
+sub jsonToFamilyArrays($$$$$$$$$$) {
 	my $json_profile	= shift;
 	my $profile_id		= shift;
 	my $fathers_ptr		= shift;
@@ -1852,6 +1875,7 @@ sub jsonToFamilyArrays($$$$$$$$$) {
 	my $daughters_ptr	= shift;
 	my $brothers_ptr	= shift;
 	my $sisters_ptr		= shift;
+	my $run_check_public	= shift;
 
 	my @fathers	= @$fathers_ptr;
 	my @mothers	= @$mothers_ptr;
@@ -1894,7 +1918,7 @@ sub jsonToFamilyArrays($$$$$$$$$) {
 			# A "hidden_child" is just a placeholder profile and can be ignored
 			next if ($rel eq "hidden_child");
 
-			if ($public eq "false" && checkPublic($id)) {
+			if ($run_check_public && $public eq "false" && checkPublic($id)) {
 				$public = "true"
 			}
 
@@ -1935,7 +1959,7 @@ sub jsonToFamilyArrays($$$$$$$$$) {
 				}
 
 			} else {
-				printDebug($DBG_NONE, "ERROR: unknown rel type '$rel'\n");
+				printDebug($DBG_PROGRESS, "ERROR: unknown rel type '$rel'\n");
 			}
 		}
 	}
@@ -1960,7 +1984,7 @@ sub analyzeTreeConflictRecursive($) {
 	}
 
 	# Then build arrays of all the immediate family members of the starting profile
-	jsonToFamilyArrays($json_profile, $profile_id, \@fathers, \@mothers, \@spouses, \@sons, \@daughters, \@brothers, \@sisters);
+	jsonToFamilyArrays($json_profile, $profile_id, \@fathers, \@mothers, \@spouses, \@sons, \@daughters, \@brothers, \@sisters, 1);
 
 	# Then resolve the tree conflicts for the immediate family members
 	my @parents_and_spouses;
@@ -2080,14 +2104,7 @@ sub rangeBeginEnd($$$$) {
 
 	my $json_page = getJSON($filename, $url, 0, 0);
 	my $conflict_count = $json_page->{'count'};
-	my $max_page = 0;
-
-	# For some odd reason pending_merges are listed 20 per page while tree conflicts are listed 50 per page
-	if ($env{'action'} eq "pending_merges") {
-		$max_page = roundup($conflict_count/20);
-	} else {
-		$max_page = roundup($conflict_count/50);
-	}
+	my $max_page = roundup($conflict_count/50);
 	printDebug($DBG_PROGRESS,
 		sprintf("There are %d %s spread over %d pages\n",
 			$conflict_count, $type, $max_page));
@@ -2153,6 +2170,9 @@ sub traverseJSONPages($$$$) {
 	} elsif ($type eq "TREE_CONFLICTS") {
 		$api_action = "tree-conflicts";
 
+	} elsif ($type eq "UGLY_COUNT") {
+		$api_action = "tree-conflicts";
+
 	} elsif ($type eq "TREE_MATCHES") {
 		$api_action = "tree-matches";
 
@@ -2198,16 +2218,23 @@ sub traverseJSONPages($$$$) {
 			printDebug($DBG_PROGRESS, "Page $page/$range_end: Profile $page_profile_count: Overall Profile $env{'profiles'}");
 		
 			if ($type eq "PENDING_MERGES") {
+				my $skip_it = 0;
 				foreach my $private_ID (@{$json_list_entry->{'private'}}) {
 					$private_ID =~ s/profile-//;
-					checkPublic($private_ID);
+					if (!checkPublic($private_ID)) {
+						$skip_it = 1;
+						printDebug($DBG_PROGRESS, ": PRIVATE_PROFILES...SKIPPING\n");
+					}
 				}
 
-				my $left_id = $json_list_entry->{'profiles'}->[0];
-				my $right_id = $json_list_entry->{'profiles'}->[1];
-				$left_id =~ s/profile-//;
-				$right_id =~ s/profile-//;
-				analyzePendingMerge($left_id, $right_id);
+				if (!$skip_it) {
+					my $left_id = $json_list_entry->{'profiles'}->[0];
+					my $right_id = $json_list_entry->{'profiles'}->[1];
+					$left_id =~ s/profile-//;
+					$right_id =~ s/profile-//;
+					analyzePendingMerge($left_id, $right_id);
+				}
+
 			} elsif ($type eq "TREE_CONFLICTS") {
 				printDebug($DBG_PROGRESS, "\n");
 				my $conflict_type = $json_list_entry->{'issue_type'};
@@ -2227,6 +2254,13 @@ sub traverseJSONPages($$$$) {
 				analyzeNewTreeConflicts();
 				unlink "$env{'datadir'}/$profile_id\.json" if ($env{'delete_files'});
 				printDebug($DBG_PROGRESS, "\n\n");
+
+			} elsif ($type eq "UGLY_COUNT") {
+				printDebug($DBG_PROGRESS, "\n");
+				my $profile_id = $json_list_entry->{'profile'};
+				$profile_id =~ s/profile-//;
+				analyzeUglyFactor($profile_id);
+
 			} elsif ($type eq "TREE_MATCHES") {
 				analyzeTreeMatch(0);
 			} elsif ($type eq "DATA_CONFLICTS") {
@@ -2337,6 +2371,12 @@ sub main() {
 		} elsif ($ARGV[$i] eq "-tm" || $ARGV[$i] eq "-tree_match") {
 			$env{'action'} = "tree_match";
 			$left_id = $ARGV[++$i];
+
+		} elsif ($ARGV[$i] eq "-ugly") {
+			$env{'action'} = "ugly";
+
+		} elsif ($ARGV[$i] eq "-guid") {
+			$env{'action'} = "guid";
 
 		} elsif ($ARGV[$i] eq "-dcs" || $ARGV[$i] eq "-data_conflicts") {
 			$env{'action'} = "data_conflicts";
@@ -2521,6 +2561,17 @@ sub main() {
 
 	} elsif ($env{'action'} eq "stack") {
 		stackProfiles($left_id, $right_id);
+
+	} elsif ($env{'action'} eq "ugly") {
+		traverseJSONPages($range_begin, $range_end, "UGLY_COUNT", 0);
+
+	} elsif ($env{'action'} eq "guid") {
+		foreach my $profile_id (sort keys %blacklist_managers) {
+			if ($profile_id =~ /\d\d\d\d\d\d\d\d\d\d\d\d\d\d\d\d\d\d\d/) {
+				my $new_id = convertGUIDToNodeID($profile_id);
+				print "Change blacklist OLD GUID ID: $profile_id to NEW ID $new_id\n";
+			}
+		}
 
 	} elsif ($env{'action'} eq "data_conflicts") {
 		do {
