@@ -18,14 +18,18 @@ init();
 do_tree_conflicts();
 
 sub do_tree_conflicts() {
-    my $conflictlist = $g->tree_conflicts() or $l->fatal($WWW::Geni::errstr) && exit(1);
     my $count, @cur, $compare;
-    while(my $conflict = $conflictlist->get_next()){
+	$count->{'conflict_page'} = 1;
+    my $conflictlist = $g->tree_conflicts($count->{'conflict_page'})
+		or $l->fatal($WWW::Geni::errstr) && exit(1);
+	$l->debug('total is ', $conflictlist->count());
+    while (my $conflict = $conflictlist->get_next()){
+        $l->debug('processed ', $count->{'conflicts'});
         $count->{'conflicts'}++;
         my $focus = $conflict->profile();
-        $l->debug('# new ', $conflict->type(), ' conflict ############################');
-        $l->debug('Focus:', $focus->first_name, ' ', $focus->middle_name, ' ',
-            $focus->last_name, ' ', $focus->birth_date, ' ', $focus->death_date, ' ', $focus->guid);
+        #$l->debug('# new ', $conflict->type(), ' conflict ############################');
+        #$l->debug('Focus:', $focus->first_name, ' ', $focus->middle_name, ' ',
+        #    $focus->last_name, ' ', $focus->birth_date, ' ', $focus->death_date, ' ', $focus->guid);
         while (my $memberlist = $conflict->fetch_list()) {
             while (my $member = $memberlist->get_next()) {
                 #$l->debug(sprintf("%s: %s %s %s (%s-%s) %s", $memberlist->{type}, $member->first_name,
@@ -33,20 +37,24 @@ sub do_tree_conflicts() {
                 push @cur, $member;
             }
             if (@cur) {
-                $l->debug('Comparing ', $#cur, " ", $memberlist->{type}) if @cur;
+                #$l->debug('Comparing ', $#cur, " ", $memberlist->{type}) if @cur;
                 while ($#cur >= 0) {
                     $compare = shift @cur;
                     foreach (@cur) {
                         if (getclass($compare) eq "WWW::Geni::Profile" &&
                             getclass($_) eq "WWW::Geni::Profile" &&
                             compare_profiles($compare, $_)) {
-                                $l->debug("would have merged ", $compare->display_name, " and ", $_->display_name);
+                                #$l->debug("would have merged ", $compare->display_name, " and ", $_->display_name);
                         }
                     }
                 }
             }
             undef @cur;
         }
+		if (!$conflictlist->has_next()) {
+    		$conflictlist = $g->tree_conflicts(++$count->{'conflict_page'})
+				or $l->fatal($WWW::Geni::errstr) && exit(1);
+		}
     }
 }
 sub compare_profiles($$) {
@@ -62,9 +70,9 @@ sub compare_profiles($$) {
 		&& !compare_surnames($p1->maiden_name, $p2->last_name)
 	);
     return 0 if !compare_dates($p1->birth_date, $p2->birth_date);
-	$l->debug("date match: ". $p1->birth_date . " and " . $p2->birth_date);
+	#$l->debug("date match: ". $p1->birth_date . " and " . $p2->birth_date);
     return 0 if !compare_dates($p1->death_date, $p2->death_date);
-	$l->debug("date match: ". $p1->death_date . " and " . $p2->death_date);
+	#$l->debug("date match: ". $p1->death_date . " and " . $p2->death_date);
     return 1;
 }
 
